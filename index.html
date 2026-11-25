@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Кубоцех · Полигон</title>
+  </head>
+  <body>
+    <div id="app">
+      <main id="main-menu" class="main-menu">
+        <div class="menu-content">
+          <span class="menu-mark" aria-hidden="true"></span>
+          <h1>Кубоцех</h1>
+          <button id="start-game" type="button">Начать играть</button>
+          <p id="menu-status" role="status"></p>
+        </div>
+      </main>
+      <section id="workshop" aria-label="Игровая сцена" hidden>
+      <canvas id="game-canvas" aria-label="Кубоцех, полигон от первого лица"></canvas>
+      <div class="hud">
+        <div class="hud__title">Кубоцех</div>
+        <div class="hud__controls">Испытательный зал</div>
+      </div>
+      <div class="reticle" aria-hidden="true"></div>
+      <p id="status" role="status"></p>
+      <button id="play-button" class="play-button" type="button">Продолжить</button>
+      <button id="touch-fire" aria-label="Выстрел" type="button">◎</button>
+      <button id="pause" aria-label="Пауза" type="button">Ⅱ</button>
+      </section>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
