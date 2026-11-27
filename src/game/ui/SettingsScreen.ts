@@ -1,7 +1,7 @@
 import type { GameAudio } from '../audio/GameAudio';
 import isMobile from 'is-mobile';
 import { inputConfig } from '../input/config';
-import type { InputMode, LookSensitivity } from '../input/LookSensitivity';
+import type { LookSensitivity } from '../input/LookSensitivity';
 import { texts } from './texts';
 import { levelTexts } from './levelTexts';
 
@@ -24,7 +24,6 @@ function percentSlider(id:string, caption:string, initial:number, range:{min:num
 export class SettingsScreen {
   private readonly root=document.createElement('div');
   private readonly resume=document.createElement('button');
-  private readonly lookRows:Record<InputMode,HTMLDivElement>;
 
   constructor(audio:GameAudio, sensitivity:LookSensitivity, onContinue:()=>void, onMenu?:()=>void) {
     this.root.className='settings-screen';
@@ -37,13 +36,10 @@ export class SettingsScreen {
     const title=document.createElement('h2'); title.textContent=texts.settings;
     panel.append(title,percentSlider('sound-volume',texts.volume,Math.round(audio.volume*100),
       {min:0,max:100,step:1},v=>audio.setVolume(v/100),()=>audio.play('coin')));
-    this.lookRows={
-      desktop:percentSlider('look-desktop',texts.mouseSensitivity,sensitivity.percent('desktop'),
-        inputConfig.lookSensitivity.ranges.desktop,v=>sensitivity.setPercent('desktop',v)),
-      mobile:percentSlider('look-mobile',texts.touchSensitivity,sensitivity.percent('mobile'),
-        inputConfig.lookSensitivity.ranges.mobile,v=>sensitivity.setPercent('mobile',v))
-    };
-    panel.append(this.lookRows.desktop,this.lookRows.mobile);
+    const mode=isMobile({tablet:true,featureDetect:true})?'mobile':'desktop';
+    panel.append(percentSlider('look-'+mode,mode==='mobile'?texts.touchSensitivity:texts.mouseSensitivity,
+      sensitivity.percent(mode),inputConfig.lookSensitivity.ranges[mode],
+      value=>sensitivity.setPercent(mode,value)));
     this.resume.type='button'; this.resume.textContent=texts.continue;
     this.resume.addEventListener('click',onContinue);
     panel.append(this.resume);
@@ -57,9 +53,6 @@ export class SettingsScreen {
 
   get isOpen():boolean { return !this.root.hidden; }
   open():void {
-    const mode:InputMode=isMobile({tablet:true,featureDetect:true})?'mobile':'desktop';
-    this.lookRows.desktop.hidden=mode!=='desktop';
-    this.lookRows.mobile.hidden=mode!=='mobile';
     this.root.hidden=false;
     this.resume.focus();
   }
