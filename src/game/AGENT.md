@@ -59,3 +59,4 @@ entities/weapons/
 - The mobile fire button owns a fire-look pointer: holding fires, dragging contributes camera look and moves the button within the game frame, and release/reset returns it to its anchored position.
 - Interaction and purchase buttons read `Workshop.getInteractions` every frame and execute `tryInteract` / `tryPurchase`; Workshop remains the authority for range, target, cost and wave restrictions.
 - Enter fullscreen only from a direct start/resume button action. On desktop request pointer lock before fullscreen because fullscreen consumes transient browser activation. Suppress the context menu only inside `#game-frame`.
+- Keep the game viewport fixed on mobile: disable page scaling in the viewport meta tag, use `touch-action: none`, and cancel Safari gesture events within `#game-frame` without interfering with the game's pointer tracking.

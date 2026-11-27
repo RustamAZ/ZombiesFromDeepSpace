@@ -37,6 +37,13 @@ export class SceneController {
     this.bindButton(this.firstLevelButton,touch=>this.start(touch,'firstLevel'));
     window.addEventListener('pagehide',()=>this.repository.save(this.profile),{signal:this.events.signal});
     this.frame.addEventListener('contextmenu',event=>event.preventDefault(),{signal:this.events.signal});
+    const preventGesture=(event:Event)=>event.preventDefault();
+    this.frame.addEventListener('gesturestart',preventGesture,{passive:false,signal:this.events.signal});
+    this.frame.addEventListener('gesturechange',preventGesture,{passive:false,signal:this.events.signal});
+    this.frame.addEventListener('gestureend',preventGesture,{passive:false,signal:this.events.signal});
+    this.frame.addEventListener('touchmove',event=>{
+      if (event.touches.length>1) event.preventDefault();
+    },{passive:false,signal:this.events.signal});
     document.addEventListener('fullscreenchange',()=>{
       requestAnimationFrame(()=>window.dispatchEvent(new Event('resize')));
     },{signal:this.events.signal});
