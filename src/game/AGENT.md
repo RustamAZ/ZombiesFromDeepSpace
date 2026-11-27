@@ -57,3 +57,4 @@ entities/weapons/
 - Compute touch halves from `canvas.getBoundingClientRect()`, not the browser window. External letterboxing is not an input surface.
 - Mobile controls support movement, look and fire simultaneously with separate pointer IDs. Reset all pointers on pause, blur, visibility change, resize, level transition and dispose.
 - Interaction and purchase buttons read `Workshop.getInteractions` every frame and execute `tryInteract` / `tryPurchase`; Workshop remains the authority for range, target, cost and wave restrictions.
+- Enter fullscreen only from a direct start/resume button action. On desktop request pointer lock before fullscreen because fullscreen consumes transient browser activation. Suppress the context menu only inside `#game-frame`.

@@ -8,6 +8,7 @@ import { GameAudio } from '../audio/GameAudio';
 
 export class SceneController {
   private readonly menu = document.querySelector<HTMLElement>('#main-menu')!;
+  private readonly frame = document.querySelector<HTMLElement>('#game-frame')!;
   private readonly workshop = document.querySelector<HTMLElement>('#workshop')!;
   private readonly canvas = document.querySelector<HTMLCanvasElement>('#game-canvas')!;
   private readonly startButton = document.querySelector<HTMLButtonElement>('#start-game')!;
@@ -35,11 +36,17 @@ export class SceneController {
     this.bindButton(this.tutorialButton,touch=>this.start(touch,'tutorial'));
     this.bindButton(this.firstLevelButton,touch=>this.start(touch,'firstLevel'));
     window.addEventListener('pagehide',()=>this.repository.save(this.profile),{signal:this.events.signal});
+    this.frame.addEventListener('contextmenu',event=>event.preventDefault(),{signal:this.events.signal});
+    document.addEventListener('fullscreenchange',()=>{
+      requestAnimationFrame(()=>window.dispatchEvent(new Event('resize')));
+    },{signal:this.events.signal});
     this.bindButton(document.querySelector<HTMLButtonElement>('#play-button')!, async touch => {
       if (this.state !== 'workshop') return;
       try {
         this.audio.unlock();
-        await this.game?.play(touch);
+        const play=this.game?.play(touch);
+        this.requestFullscreen();
+        await play;
         this.status.textContent = '';
       } catch {
         this.status.textContent = texts.pointerLockError;
@@ -80,6 +87,7 @@ export class SceneController {
     try {
       const lock = !touch && this.canvas.requestPointerLock
         ? Promise.resolve(this.canvas.requestPointerLock()).catch(() => {}) : Promise.resolve();
+      this.requestFullscreen();
       if (this.events.signal.aborted) return;
       const game = await LevelSession.create(this.canvas,this.audio,levels[id],this.profile,completed=>{
         this.backToMenu();
@@ -103,6 +111,11 @@ export class SceneController {
       this.showMenu();
       this.menuStatus.textContent = texts.loadError;
     }
+  }
+
+  private requestFullscreen():void {
+    if (document.fullscreenElement || !this.frame.requestFullscreen) return;
+    void this.frame.requestFullscreen({ navigationUI:'hide' }).catch(()=>{});
   }
 
   private backToMenu():void {

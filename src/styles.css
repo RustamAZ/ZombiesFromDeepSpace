@@ -34,6 +34,8 @@ body,
   aspect-ratio: 16 / 9;
   overflow: hidden;
   background: #223d4b;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 #game-canvas {
