@@ -1,4 +1,5 @@
 import type { GameAudio } from '../audio/GameAudio';
+import isMobile from 'is-mobile';
 import { inputConfig } from '../input/config';
 import type { InputMode, LookSensitivity } from '../input/LookSensitivity';
 import { texts } from './texts';
@@ -25,8 +26,7 @@ export class SettingsScreen {
   private readonly resume=document.createElement('button');
   private readonly lookRows:Record<InputMode,HTMLDivElement>;
 
-  constructor(audio:GameAudio, sensitivity:LookSensitivity, private readonly getInputMode:()=>InputMode,
-    onContinue:()=>void, onMenu?:()=>void) {
+  constructor(audio:GameAudio, sensitivity:LookSensitivity, onContinue:()=>void, onMenu?:()=>void) {
     this.root.className='settings-screen';
     this.root.hidden=true;
     const panel=document.createElement('section');
@@ -57,7 +57,7 @@ export class SettingsScreen {
 
   get isOpen():boolean { return !this.root.hidden; }
   open():void {
-    const mode=this.getInputMode();
+    const mode:InputMode=isMobile({tablet:true,featureDetect:true})?'mobile':'desktop';
     this.lookRows.desktop.hidden=mode!=='desktop';
     this.lookRows.mobile.hidden=mode!=='mobile';
     this.root.hidden=false;

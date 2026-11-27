@@ -67,7 +67,7 @@ export class FirstPersonGame {
     this.hud=new RunHud();
     this.worldLabels=new WorldLabelsOverlay(scene,this.workshop);
     this.input=new InputController(canvas);
-    this.settings=new SettingsScreen(audio,this.input.sensitivity,()=>this.input.mode,()=>{
+    this.settings=new SettingsScreen(audio,this.input.sensitivity,()=>{
       audio.unlock();
       void this.play(this.pausedFromTouch).catch(()=>{
         document.querySelector<HTMLElement>('#status')!.textContent=texts.pointerLockError;
