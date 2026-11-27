@@ -56,5 +56,6 @@ entities/weapons/
 - Mobile touch roles are assigned on pointer down and remain fixed until release. The left canvas half is movement only; the right half is look only. UI buttons own their pointers and must not also rotate the camera.
 - Compute touch halves from `canvas.getBoundingClientRect()`, not the browser window. External letterboxing is not an input surface.
 - Mobile controls support movement, look and fire simultaneously with separate pointer IDs. Reset all pointers on pause, blur, visibility change, resize, level transition and dispose.
+- The mobile fire button owns a fire-look pointer: holding fires, dragging contributes camera look and moves the button within the game frame, and release/reset returns it to its anchored position.
 - Interaction and purchase buttons read `Workshop.getInteractions` every frame and execute `tryInteract` / `tryPurchase`; Workshop remains the authority for range, target, cost and wave restrictions.
 - Enter fullscreen only from a direct start/resume button action. On desktop request pointer lock before fullscreen because fullscreen consumes transient browser activation. Suppress the context menu only inside `#game-frame`.

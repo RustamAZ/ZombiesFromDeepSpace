@@ -3,12 +3,14 @@ import { GameInput,type InputCommand,type LookDelta } from './GameInput';
 import { MobileControls } from '../ui/mobile/MobileControls';
 
 type Pointer={id:number;startX:number;startY:number;x:number;y:number};
+type FirePointer=Pointer&{minX:number;maxX:number;minY:number;maxY:number};
 export class MobileInput extends GameInput {
   private readonly controls=new MobileControls();
   private readonly commands=new Set<InputCommand>();
   private readonly events=new AbortController();
   private movement?:Pointer;
   private lookPointer?:Pointer;
+  private firePointer?:FirePointer;
   private movementX=0;
   private movementZ=0;
   private look:LookDelta={x:0,y:0};
@@ -22,7 +24,7 @@ export class MobileInput extends GameInput {
     canvas.addEventListener('pointerup',event=>this.endSurfacePointer(event.pointerId),options);
     canvas.addEventListener('pointercancel',event=>this.endSurfacePointer(event.pointerId),options);
     canvas.addEventListener('lostpointercapture',event=>this.endSurfacePointer(event.pointerId),options);
-    this.bindHold(this.controls.fire,value=>this.firingValue=value,options);
+    this.bindFireLook(options);
     this.bindCommand(this.controls.interact,'interact',options);
     this.bindCommand(this.controls.purchase,'purchase',options);
     this.bindCommand(this.controls.pause,'pause',options);
@@ -39,9 +41,9 @@ export class MobileInput extends GameInput {
   consumeLook():LookDelta { const value=this.look; this.look={x:0,y:0}; return value; }
   consume(command:InputCommand):boolean { return this.commands.delete(command); }
   reset():void {
-    this.movement=undefined; this.lookPointer=undefined;
+    this.movement=undefined; this.lookPointer=undefined; this.firePointer=undefined;
     this.movementX=this.movementZ=0; this.look={x:0,y:0}; this.firingValue=false;
-    this.commands.clear(); this.controls.hideJoystick();
+    this.commands.clear(); this.controls.hideJoystick(); this.controls.resetFirePosition();
   }
   dispose():void { this.reset(); this.events.abort(); this.controls.dispose(); }
   private beginSurfacePointer(event:PointerEvent):void {
@@ -86,12 +88,38 @@ export class MobileInput extends GameInput {
     }
     if (this.lookPointer?.id===id) this.lookPointer=undefined;
   }
-  private bindHold(button:HTMLButtonElement,change:(value:boolean)=>void,options:AddEventListenerOptions):void {
+  private bindFireLook(options:AddEventListenerOptions):void {
+    const button=this.controls.fire;
     button.addEventListener('pointerdown',event=>{
-      if (!this.enabled || event.pointerType!=='touch') return;
-      event.preventDefault(); event.stopPropagation(); button.setPointerCapture(event.pointerId); change(true);
+      if (!this.enabled || event.pointerType!=='touch' || this.firePointer) return;
+      event.preventDefault(); event.stopPropagation();
+      const canvasRect=this.canvas.getBoundingClientRect();
+      const buttonRect=button.getBoundingClientRect();
+      this.firePointer={
+        id:event.pointerId,startX:event.clientX,startY:event.clientY,x:event.clientX,y:event.clientY,
+        minX:canvasRect.left-buttonRect.left,maxX:canvasRect.right-buttonRect.right,
+        minY:canvasRect.top-buttonRect.top,maxY:canvasRect.bottom-buttonRect.bottom
+      };
+      button.setPointerCapture(event.pointerId);
+      this.firingValue=true;
+      this.controls.setFireDragging(true);
     },options);
-    const stop=(event:PointerEvent)=>{ event.stopPropagation(); change(false); };
+    button.addEventListener('pointermove',event=>{
+      const pointer=this.firePointer;
+      if (!this.enabled || event.pointerType!=='touch' || pointer?.id!==event.pointerId) return;
+      event.preventDefault(); event.stopPropagation();
+      this.look.x+=(event.clientX-pointer.x)*inputConfig.mobileLookScale;
+      this.look.y+=(event.clientY-pointer.y)*inputConfig.mobileLookScale;
+      pointer.x=event.clientX; pointer.y=event.clientY;
+      const dx=Math.max(pointer.minX,Math.min(pointer.maxX,event.clientX-pointer.startX));
+      const dy=Math.max(pointer.minY,Math.min(pointer.maxY,event.clientY-pointer.startY));
+      this.controls.setFireOffset(dx,dy);
+    },options);
+    const stop=(event:PointerEvent)=>{
+      if (this.firePointer?.id!==event.pointerId) return;
+      event.stopPropagation(); this.firePointer=undefined; this.firingValue=false;
+      this.controls.resetFirePosition();
+    };
     button.addEventListener('pointerup',stop,options); button.addEventListener('pointercancel',stop,options);
     button.addEventListener('lostpointercapture',stop,options);
   }

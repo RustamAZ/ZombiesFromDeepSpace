@@ -30,11 +30,21 @@ export class MobileControls {
     this.stick.style.transform=`translate(${dx}px,${dy}px)`;
   }
   hideJoystick():void { this.joystick.hidden=true; this.stick.style.transform='translate(0,0)'; }
+  setFireDragging(dragging:boolean):void { this.fire.classList.toggle('is-dragging',dragging); }
+  setFireOffset(x:number,y:number):void {
+    this.fire.style.setProperty('--mobile-fire-x',`${x}px`);
+    this.fire.style.setProperty('--mobile-fire-y',`${y}px`);
+  }
+  resetFirePosition():void {
+    this.setFireDragging(false);
+    this.fire.style.removeProperty('--mobile-fire-x');
+    this.fire.style.removeProperty('--mobile-fire-y');
+  }
   setActions(interact?:string,purchase?:string):void {
     this.interact.hidden=!interact; this.purchase.hidden=!purchase;
     if (interact) this.interact.textContent=interact;
     if (purchase) this.purchase.textContent=purchase;
   }
-  setVisible(visible:boolean):void { this.root.hidden=!visible; }
+  setVisible(visible:boolean):void { this.root.hidden=!visible; if (!visible) this.resetFirePosition(); }
   dispose():void { this.root.remove(); }
 }

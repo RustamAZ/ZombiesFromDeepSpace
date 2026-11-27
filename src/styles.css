@@ -278,6 +278,12 @@ body,
 .mobile-control--fire {
   right:max(18px,env(safe-area-inset-right)); bottom:max(22px,env(safe-area-inset-bottom));
   width:72px; height:72px; border-radius:50%; color:#ffcb46; font-size:34px;
+  transform:translate(var(--mobile-fire-x,0),var(--mobile-fire-y,0));
+  transition:transform 140ms ease-out,background-color 100ms ease-out;
+}
+.mobile-control--fire.is-dragging { transition:none; }
+.mobile-control--fire:active {
+  transform:translate(var(--mobile-fire-x,0),var(--mobile-fire-y,0)) scale(.94);
 }
 .mobile-control--interact,.mobile-control--purchase {
   right:max(104px,calc(env(safe-area-inset-right) + 92px));
