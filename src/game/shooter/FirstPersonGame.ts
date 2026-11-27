@@ -66,7 +66,8 @@ export class FirstPersonGame {
     this.workshop = new Workshop(scene,this.projectiles,this.profile,level,()=>this.lose(),sound=>this.audio.play(sound));
     this.hud=new RunHud();
     this.worldLabels=new WorldLabelsOverlay(scene,this.workshop);
-    this.settings=new SettingsScreen(audio,()=>{
+    this.input=new InputController(canvas);
+    this.settings=new SettingsScreen(audio,this.input.sensitivity,()=>{
       audio.unlock();
       void this.play(this.pausedFromTouch).catch(()=>{
         document.querySelector<HTMLElement>('#status')!.textContent=texts.pointerLockError;
@@ -74,7 +75,6 @@ export class FirstPersonGame {
     },onMenu);
     this.view = new CubeBlasterView(scene, this.player.camera);
     this.player.slot.equip(new CubeBlaster(new ProjectileSpawner(this.view.muzzle, this.projectiles, this.player)));
-    this.input=new InputController(canvas);
     const opts = { signal: this.events.signal };
     document.addEventListener('pointerlockchange', () => {
       const wasPlaying=document.body.classList.contains('playing');

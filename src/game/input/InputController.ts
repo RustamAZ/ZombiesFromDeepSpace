@@ -1,9 +1,10 @@
 import { DesktopInput } from './DesktopInput';
 import { MobileInput } from './MobileInput';
 import type { InputCommand,LookDelta } from './GameInput';
+import { LookSensitivity,type InputMode } from './LookSensitivity';
 
-export type InputMode='desktop'|'mobile';
 export class InputController {
+  readonly sensitivity=new LookSensitivity();
   private readonly desktop:DesktopInput;
   private readonly mobile:MobileInput;
   private modeValue:InputMode='desktop';
@@ -18,7 +19,12 @@ export class InputController {
   }
   setPlaying(playing:boolean):void { this.playing=playing; this.applyEnabled(); }
   setMobileActions(interact?:string,purchase?:string):void { this.mobile.setActions(interact,purchase); }
-  consumeLook():LookDelta { return this.active.consumeLook(); }
+  consumeLook():LookDelta {
+    const delta=this.active.consumeLook();
+    const scale=this.sensitivity.scale(this.modeValue);
+    delta.x*=scale; delta.y*=scale;
+    return delta;
+  }
   consume(command:InputCommand):boolean { return this.active.consume(command); }
   reset():void { this.desktop.reset(); this.mobile.reset(); }
   dispose():void { this.desktop.dispose(); this.mobile.dispose(); }

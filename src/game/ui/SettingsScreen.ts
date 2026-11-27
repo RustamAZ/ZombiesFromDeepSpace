@@ -1,14 +1,30 @@
 import type { GameAudio } from '../audio/GameAudio';
+import { inputConfig } from '../input/config';
+import type { LookSensitivity } from '../input/LookSensitivity';
 import { texts } from './texts';
 import { levelTexts } from './levelTexts';
 
+function percentSlider(id:string, caption:string, initial:number, range:{min:number;max:number;step:number},
+  onInput:(value:number)=>void, onChange?:()=>void):HTMLDivElement {
+  const row=document.createElement('div'); row.className='settings-range';
+  const label=document.createElement('label'); label.htmlFor=id; label.textContent=caption;
+  const slider=document.createElement('input'); slider.id=id; slider.type='range';
+  slider.min=String(range.min); slider.max=String(range.max); slider.step=String(range.step);
+  slider.value=String(initial);
+  const output=document.createElement('output'); output.htmlFor.add(id);
+  const showValue=()=>{ output.textContent=slider.value+'%'; slider.setAttribute('aria-valuetext',output.textContent); };
+  showValue();
+  slider.addEventListener('input',()=>{ showValue(); onInput(slider.valueAsNumber); });
+  if (onChange) slider.addEventListener('change',onChange);
+  row.append(label,output,slider);
+  return row;
+}
+
 export class SettingsScreen {
   private readonly root=document.createElement('div');
-  private readonly slider=document.createElement('input');
-  private readonly value=document.createElement('output');
   private readonly resume=document.createElement('button');
 
-  constructor(private readonly audio:GameAudio, onContinue:()=>void, onMenu?:()=>void) {
+  constructor(audio:GameAudio, sensitivity:LookSensitivity, onContinue:()=>void, onMenu?:()=>void) {
     this.root.className='settings-screen';
     this.root.hidden=true;
     const panel=document.createElement('section');
@@ -17,21 +33,15 @@ export class SettingsScreen {
     panel.setAttribute('aria-modal','true');
     panel.setAttribute('aria-label',texts.settings);
     const title=document.createElement('h2'); title.textContent=texts.settings;
-    const label=document.createElement('label'); label.htmlFor='sound-volume'; label.textContent=texts.volume;
-    this.slider.id='sound-volume'; this.slider.type='range';
-    this.slider.min='0'; this.slider.max='100'; this.slider.step='1';
-    this.slider.value=String(Math.round(audio.volume*100));
-    this.value.textContent=`${this.slider.value}%`;
-    this.slider.addEventListener('input',()=>{
-      this.value.textContent=`${this.slider.value}%`;
-      audio.setVolume(Number(this.slider.value)/100);
-    });
-    this.slider.addEventListener('change',()=>audio.play('coin'));
-    const row=document.createElement('div'); row.className='settings-volume';
-    row.append(label,this.value,this.slider);
+    panel.append(title,percentSlider('sound-volume',texts.volume,Math.round(audio.volume*100),
+      {min:0,max:100,step:1},v=>audio.setVolume(v/100),()=>audio.play('coin')));
+    for (const mode of ['desktop','mobile'] as const) {
+      panel.append(percentSlider('look-'+mode,mode==='desktop'?texts.mouseSensitivity:texts.touchSensitivity,
+        sensitivity.percent(mode),inputConfig.lookSensitivity,v=>sensitivity.setPercent(mode,v)));
+    }
     this.resume.type='button'; this.resume.textContent=texts.continue;
     this.resume.addEventListener('click',onContinue);
-    panel.append(title,row,this.resume);
+    panel.append(this.resume);
     if (onMenu) {
       const menu=document.createElement('button'); menu.textContent=levelTexts.menu;
       menu.addEventListener('click',onMenu); panel.append(menu);
@@ -42,8 +52,6 @@ export class SettingsScreen {
 
   get isOpen():boolean { return !this.root.hidden; }
   open():void {
-    this.slider.value=String(Math.round(this.audio.volume*100));
-    this.value.textContent=`${this.slider.value}%`;
     this.root.hidden=false;
     this.resume.focus();
   }

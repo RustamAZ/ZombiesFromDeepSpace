@@ -11,6 +11,8 @@ export const texts={
   pause:'Пауза',
   settings:'Настройки',
   volume:'Громкость',
+  mouseSensitivity:'Чувствительность мыши',
+  touchSensitivity:'Чувствительность касания',
   pointerLockError:'Не удалось захватить мышь. Нажмите «Продолжить».',
   loadError:'Не удалось загрузить игровую сцену. Попробуйте ещё раз.',
   player:'Игрок',

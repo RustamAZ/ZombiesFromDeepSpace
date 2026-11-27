@@ -77,8 +77,8 @@ export class MobileInput extends GameInput {
       const rect=this.canvas.getBoundingClientRect();
       this.controls.setJoystick(this.movement.startX-rect.left,this.movement.startY-rect.top,dx*scale,dy*scale);
     } else if (this.lookPointer?.id===event.pointerId) {
-      this.look.x+=(event.clientX-this.lookPointer.x)*inputConfig.mobileLookScale;
-      this.look.y+=(event.clientY-this.lookPointer.y)*inputConfig.mobileLookScale;
+      this.look.x+=event.clientX-this.lookPointer.x;
+      this.look.y+=event.clientY-this.lookPointer.y;
       this.lookPointer.x=event.clientX; this.lookPointer.y=event.clientY;
     }
   }
@@ -108,8 +108,8 @@ export class MobileInput extends GameInput {
       const pointer=this.firePointer;
       if (!this.enabled || event.pointerType!=='touch' || pointer?.id!==event.pointerId) return;
       event.preventDefault(); event.stopPropagation();
-      this.look.x+=(event.clientX-pointer.x)*inputConfig.mobileLookScale;
-      this.look.y+=(event.clientY-pointer.y)*inputConfig.mobileLookScale;
+      this.look.x+=event.clientX-pointer.x;
+      this.look.y+=event.clientY-pointer.y;
       pointer.x=event.clientX; pointer.y=event.clientY;
       const dx=Math.max(pointer.minX,Math.min(pointer.maxX,event.clientX-pointer.startX));
       const dy=Math.max(pointer.minY,Math.min(pointer.maxY,event.clientY-pointer.startY));
