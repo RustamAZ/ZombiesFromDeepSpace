@@ -11,11 +11,17 @@ export class NavigationAgent {
   constructor(private readonly grid: NavigationGrid) {}
 
   get waypoints(): readonly Vector3[] { return this.route; }
+  get plannedBreakTarget(): NavigationCell | undefined {
+    return this.revision===this.grid.revision ? this.door : undefined;
+  }
   get readyToBreak(): NavigationCell | undefined {
     return this.revision===this.grid.revision && !this.route.length ? this.door : undefined;
   }
 
-  move(pos: Vector3, goal: Vector3, speed: number, dt: number, canBreach: boolean): 'moving'|'arrived'|'blocked' {
+  invalidate(): void { this.goal=undefined; this.route=[]; this.door=undefined; }
+
+  move(pos: Vector3, goal: Vector3, speed: number, dt: number, canBreach: boolean,
+    canStep: (from: Vector3, to: Vector3) => boolean = () => true): 'moving'|'arrived'|'blocked'|'waiting' {
     if (!this.goal || this.revision!==this.grid.revision || this.canBreach!==canBreach ||
         Vector3.DistanceSquared(this.goal,goal)>(this.route.length ? 0.09 : 0.0025)) {
       const plan=this.grid.path(pos,goal,canBreach);
@@ -31,9 +37,12 @@ export class NavigationAgent {
     while (this.route.length) {
       const next=this.route[0], delta=next.subtract(pos), distance=delta.length();
       if (distance>travel) {
-        pos.addInPlace(delta.scale(travel/distance));
+        const step=pos.add(delta.scale(travel/distance));
+        if (!canStep(pos,step)) return 'waiting';
+        pos.copyFrom(step);
         return 'moving';
       }
+      if (!canStep(pos,next)) return 'waiting';
       pos.copyFrom(next);
       travel-=distance;
       this.route.shift();

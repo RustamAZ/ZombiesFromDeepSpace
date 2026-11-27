@@ -143,6 +143,15 @@ export class VoxelModel {
     this.refreshSolidBody();
   }
 
+  setStaticCollisionEnabled(enabled: boolean): void {
+    if (enabled) {
+      this.refreshSolidBody();
+      return;
+    }
+    this.solidBody?.dispose();
+    this.solidBody = undefined;
+  }
+
   private mobile = false;
 
   enableCoreSupport(isCore: (depth: number) => boolean): void {
@@ -190,9 +199,21 @@ export class VoxelModel {
 
   get remainingCells(): number { return this.activePieceCount; }
 
-  collapse(): void {
+  disposeIntact(): void {
+    this.solidBody?.dispose();
+    this.solidBody=undefined;
+    this.disposeIntactMeshes();
+    this.root.dispose();
+  }
+
+  disposeAll(): void {
+    this.debrisController.evictOwner(this);
+    this.disposeIntact();
+  }
+
+  collapse(physicalFragmentCount = Number.POSITIVE_INFINITY): void {
     const ids = Array.from(this.piecesByGridKey.values(), p => p.id);
-    if (ids.length) this.applyDamagePlan({ removedVoxelIds: [], debrisEntries: [] }, [ids], 1);
+    if (ids.length) this.applyDamagePlan({ removedVoxelIds: [], debrisEntries: [] }, [ids], 1, physicalFragmentCount);
   }
 
   private refreshSolidBody(): void {
@@ -213,6 +234,7 @@ export class VoxelModel {
   }
 
   getWorldBounds(): VoxelWorldBounds {
+    if (!this.activePieceCount) return {min:this.root.position.clone(),max:this.root.position.clone()};
     const min = new Vector3(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
     const max = new Vector3(Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY);
 
@@ -295,7 +317,8 @@ export class VoxelModel {
     }
   }
 
-  applyDamagePlan(damagePlan: VoxelDamagePlan, groups: readonly number[][] = [], groupSlots = 0): boolean {
+  applyDamagePlan(damagePlan: VoxelDamagePlan, groups: readonly number[][] = [], groupSlots = 0,
+    physicalFragmentCount = Number.POSITIVE_INFINITY): boolean {
     if (this.activePieceCount === 0 || (!damagePlan.removedVoxelIds.length && !groups.length)) {
       return false;
     }
@@ -365,10 +388,14 @@ export class VoxelModel {
     }
 
     if (this.floorAnchors && !this.mobile) this.refreshSolidBody();
+    let fragmentIndex = 0;
     for (const detached of detachedGroups) {
       const all=detached.rigidParts.flat().concat(detached.fractureCells);
       const center=this.groupOrigin(all);
-      detached.rigidParts.forEach((group,index) => this.spawnDebrisGroup(group,center,index%2===0?-1:1));
+      detached.rigidParts.forEach((group,index) => {
+        this.spawnDebrisGroup(group,center,index%2===0?-1:1,fragmentIndex<physicalFragmentCount);
+        fragmentIndex += 1;
+      });
       this.spawnFractureDebris(detached.fractureCells,center);
     }
     this.spawnDebrisPieces(damagePieces);
@@ -517,7 +544,7 @@ export class VoxelModel {
     return origin.scaleInPlace(1/pieces.length);
   }
 
-  private spawnDebrisGroup(pieces: VoxelPiece[], sharedOrigin: Vector3, side: number): void {
+  private spawnDebrisGroup(pieces: VoxelPiece[], sharedOrigin: Vector3, side: number, physical = true): void {
     const origin=this.groupOrigin(pieces);
     const source = MeshBuilder.CreateBox('fragment-cell', { size: this.voxelSize }, this.scene);
     const particles = new SolidParticleSystem('fallen-section', this.scene, { updatable: false });
@@ -532,6 +559,7 @@ export class VoxelModel {
     const mesh = particles.buildMesh();
     source.dispose();
     mesh.position.copyFrom(this.getWorldPosition(origin));
+    mesh.rotation.x = this.root.rotation.x;
     mesh.rotation.y = this.rotationY;
     mesh.material = this.getMaterial(-1, this.palette);
     mesh.isPickable = mesh.checkCollisions = false;
@@ -548,7 +576,7 @@ export class VoxelModel {
     velocity.y=shooterDebrisConfig.detachedLiftSpeed;
     const spin=new Vector3(0,side*shooterDebrisConfig.detachedSpinSpeed,side*0.35);
     this.registerDebris(mesh, pieces.length * 0.01, velocity, spin,
-      () => createVoxelSolidBody(mesh, pieces, this.voxelSize, origin, pieces.length * 0.01));
+      physical ? () => createVoxelSolidBody(mesh, pieces, this.voxelSize, origin, pieces.length * 0.01) : undefined);
   }
 
   private spawnFractureDebris(pieces: readonly VoxelPiece[], center: Vector3): void {
@@ -580,15 +608,20 @@ export class VoxelModel {
   }
 
   private registerDebris(mesh: Mesh, mass: number, velocity: Vector3, spin: Vector3,
-    createBody: () => Debris['aggregate']): void {
+    createBody?: () => Debris['aggregate']): void {
     mesh.computeWorldMatrix(true);
     mesh.metadata={...mesh.metadata,voxelDebris:true};
-    const item: Debris = { mesh, mass, aggregate: createBody() };
+    const item: Debris = { mesh, mass, aggregate: createBody?.() };
     mesh.isPickable = mesh.checkCollisions = true;
     item.aggregate?.body.setLinearDamping(0.12);
     item.aggregate?.body.setAngularDamping(0.42);
     item.aggregate?.body.setLinearVelocity(velocity);
     item.aggregate?.body.setAngularVelocity(spin);
+    if (!item.aggregate) {
+      item.fallbackVelocity = velocity.clone();
+      item.fallbackAngularVelocity = spin.clone();
+      mesh.isPickable = mesh.checkCollisions = false;
+    }
     this.debris.push(item);
     this.debrisController.register(() => {
       item.aggregate?.dispose();
@@ -632,7 +665,10 @@ export class VoxelModel {
     },()=>{
       const camera=this.scene.activeCamera;
       return !!camera && mesh.isEnabled() && mesh.isVisible && camera.isInFrustum(mesh);
-    });
+    }, !!item.aggregate,()=>mesh.position.clone(),(point,scale)=>{
+      mesh.position.copyFrom(point);
+      mesh.scaling.setAll(Math.max(0.001,scale));
+    },this);
   }
 
   private assignLayerDepths(): void {
@@ -842,11 +878,15 @@ export class VoxelModel {
     const delta = worldPosition.subtract(this.root.position);
     const sin = Math.sin(this.rotationY);
     const cos = Math.cos(this.rotationY);
+    const localX = delta.x * cos - delta.z * sin;
+    const tiltedZ = delta.x * sin + delta.z * cos;
+    const tiltSin = Math.sin(this.root.rotation.x);
+    const tiltCos = Math.cos(this.root.rotation.x);
 
     return new Vector3(
-      delta.x * cos - delta.z * sin,
-      delta.y,
-      delta.x * sin + delta.z * cos
+      localX,
+      delta.y * tiltCos + tiltedZ * tiltSin,
+      -delta.y * tiltSin + tiltedZ * tiltCos
     );
   }
 
@@ -872,11 +912,15 @@ export class VoxelModel {
   private getWorldPosition(localPosition: Vector3): Vector3 {
     const sin = Math.sin(this.rotationY);
     const cos = Math.cos(this.rotationY);
+    const tiltSin = Math.sin(this.root.rotation.x);
+    const tiltCos = Math.cos(this.root.rotation.x);
+    const tiltedY = localPosition.y * tiltCos - localPosition.z * tiltSin;
+    const tiltedZ = localPosition.y * tiltSin + localPosition.z * tiltCos;
 
     return new Vector3(
-      this.root.position.x + localPosition.x * cos + localPosition.z * sin,
-      this.root.position.y + localPosition.y,
-      this.root.position.z - localPosition.x * sin + localPosition.z * cos
+      this.root.position.x + localPosition.x * cos + tiltedZ * sin,
+      this.root.position.y + tiltedY,
+      this.root.position.z - localPosition.x * sin + tiltedZ * cos
     );
   }
 

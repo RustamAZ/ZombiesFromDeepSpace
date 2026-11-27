@@ -1,10 +1,12 @@
 import { AbstractMesh, Color3, Mesh, MeshBuilder, Ray, Scene, StandardMaterial, Vector3 } from '@babylonjs/core';
+import type { EnemyTarget } from '../entities/enemies/Enemy';
 
 export interface Impact {
   readonly damage: number;
   readonly penetration: number;
   readonly impactRadius: number;
   readonly forceDestruction?: boolean;
+  readonly source?: EnemyTarget;
 }
 
 export interface ProjectileSpec extends Impact {
@@ -26,7 +28,7 @@ export class ProjectileSystem {
 
   constructor(private readonly scene: Scene, private readonly hit: (
     mesh: AbstractMesh, point: Vector3, direction: Vector3, normal: Vector3, impact: Impact
-  ) => void) {
+  ) => void, private readonly onImpact:()=>void = () => {}) {
     this.material = new StandardMaterial('charge', scene);
     this.material.emissiveColor = Color3.FromHexString('#FFDB47');
   }
@@ -42,6 +44,7 @@ export class ProjectileSystem {
     const normal = hit.getNormal(true, false) ?? ray.direction.negate();
     if (Vector3.Dot(normal, ray.direction) > 0) normal.negateInPlace();
     this.hit(hit.pickedMesh, hit.pickedPoint, ray.direction, normal, impact);
+    this.onImpact();
     return true;
   }
 

@@ -3,30 +3,34 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Кубоцех · Полигон</title>
+    <title></title>
   </head>
   <body>
     <div id="app">
+      <div id="game-frame">
       <main id="main-menu" class="main-menu">
         <div class="menu-content">
           <span class="menu-mark" aria-hidden="true"></span>
-          <h1>Кубоцех</h1>
-          <button id="start-game" type="button">Начать играть</button>
+          <h1 id="game-title"></h1>
+          <button id="start-game" type="button"></button>
+          <div class="level-menu">
+            <button id="start-tutorial" type="button"></button>
+            <button id="start-first-level" type="button"></button>
+          </div>
           <p id="menu-status" role="status"></p>
         </div>
       </main>
-      <section id="workshop" aria-label="Игровая сцена" hidden>
-      <canvas id="game-canvas" aria-label="Кубоцех, полигон от первого лица"></canvas>
-      <div class="hud">
-        <div class="hud__title">Кубоцех</div>
-        <div class="hud__controls">Испытательный зал</div>
-      </div>
-      <div class="reticle" aria-hidden="true"></div>
-      <p id="status" role="status"></p>
-      <button id="play-button" class="play-button" type="button">Продолжить</button>
-      <button id="touch-fire" aria-label="Выстрел" type="button">◎</button>
-      <button id="pause" aria-label="Пауза" type="button">Ⅱ</button>
+      <section id="workshop" hidden>
+        <canvas id="game-canvas"></canvas>
+        <div class="hud">
+          <div class="hud__title" id="hud-title"></div>
+          <div class="hud__controls" id="hud-room"></div>
+        </div>
+        <div class="reticle" aria-hidden="true"></div>
+        <p id="status" role="status"></p>
+        <button id="play-button" class="play-button" type="button"></button>
       </section>
+      </div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

@@ -8,6 +8,7 @@ import type { NavigationCell, NavigationGrid } from '../../../navigation/Navigat
 import { VoxelDamageTarget } from '../../../shooter/VoxelDamageTarget';
 import type { Impact } from '../../../shooter/ProjectileSystem';
 import { zombieConfig as cfg } from './config';
+import { ZombieTargetPriority } from './ZombieTargetPriority';
 
 export interface ZombieObstacleBreaker {
   break(cell: NavigationCell, direction: Vector3, impact: Impact): boolean;
@@ -17,13 +18,16 @@ export class VoxelZombie extends Enemy {
   readonly config=cfg;
   readonly target: VoxelDamageTarget;
   private readonly ai: EnemyController;
+  private readonly priority: ZombieTargetPriority;
   private readonly face: TransformNode;
   private readonly eyes: Mesh[]=[];
   private readonly eyePaint: StandardMaterial;
   private readonly visionRoot: TransformNode;
   private readonly visionMaterials: StandardMaterial[]=[];
   private hearingArea?: Mesh;
-  private readonly originalCells: number;
+  private health: number=cfg.maxHealth;
+  private deathTime = -1;
+  private deathCollapsed = false;
   private readonly headPivot=new Vector3(-cfg.cell/2,cfg.cell*6,-cfg.cell/2);
   private headYaw=0;
   private wallAttackPhase: 'idle'|'windup'|'recovery'='idle';
@@ -32,18 +36,29 @@ export class VoxelZombie extends Enemy {
   private wallAttackLean=0;
   private attackCell?: NavigationCell;
   get state() { return this.ai.state; }
+  get deathComplete(): boolean { return this.deathCollapsed; }
   get debug() { return this.ai.debug; }
+  get aimPoint(): Vector3 { return this.ai.position.add(new Vector3(0,cfg.height*cfg.cell*0.5,0)); }
+  ownsMesh(mesh: AbstractMesh): boolean { return this.target.model.getIntactMeshes().includes(mesh as Mesh); }
 
   constructor(scene: Scene, spawn: Vector3, grid: NavigationGrid, debris: VoxelDebrisController,
-    private readonly obstacleBreaker: ZombieObstacleBreaker) {
+    private readonly obstacleBreaker: ZombieObstacleBreaker,
+    private readonly getCrowd: () => readonly Enemy[], core: EnemyTarget,
+    private readonly onDefeated?: (position:Vector3)=>void) {
     super();
+    this.priority=new ZombieTargetPriority(core);
     const voxels: VoxVoxel[]=[];
     for (let x=0;x<cfg.width;++x) for (let y=0;y<cfg.depth;++y) for (let z=0;z<cfg.height;++z)
       voxels.push({x,y,z,colorIndex:z<3?0:z<6?1:2});
     const model=VoxelModel.fromData(scene,{size:new Vector3(cfg.width,cfg.depth,cfg.height),voxels,
       palette:['#374A64','#625585','#83BD78'].map(hex=>Color3.FromHexString(hex))},spawn.clone(),debris,cfg.cell);
-    this.originalCells=model.remainingCells;
-    this.target=new VoxelDamageTarget(model,cfg.material);
+    this.target=new VoxelDamageTarget(model,cfg.material,undefined,(_,normal,impact)=>{
+      // The surface normal faces the shooter, so the opposite direction pushes the zombie back.
+      this.ai.applyKnockback(normal.negate(),cfg.hitKnockbackSpeed);
+      this.ai.applyHitSlow(cfg.hitSlowSeconds);
+      this.takeProjectileDamage(impact.damage);
+      if (!impact.forceDestruction && this.state!=='dead') this.priority.hitBy(impact.source);
+    });
     const own=new Set<AbstractMesh>(model.getIntactMeshes());
     for (const m of own) m.isPickable=m.checkCollisions=true;
     this.face=new TransformNode('zombie-face',scene);
@@ -65,7 +80,13 @@ export class VoxelZombie extends Enemy {
         new Color3(0.72,0.3,1),0.065);
       this.hearingArea.setEnabled(false);
     }
-    this.ai=new EnemyController(spawn.clone(),grid,cfg,player=>this.canSee(scene,own,player));
+    this.ai=new EnemyController(spawn.clone(),grid,cfg,()=>
+      this.getCrowd()
+        .filter(enemy=>enemy!==this && enemy.state!=='dead')
+        .map(enemy=>enemy.debug.position),()=>
+      this.getCrowd()
+        .filter((enemy):enemy is VoxelZombie=>enemy instanceof VoxelZombie && enemy!==this && enemy.state!=='dead')
+        .flatMap(enemy=>enemy.ai.assaultPosition ? [enemy.ai.assaultPosition] : []));
     this.syncPose();
   }
 
@@ -114,21 +135,19 @@ export class VoxelZombie extends Enemy {
   }
 
   update(dt: number, player: EnemyTarget): void {
-    if (this.state==='dead') return;
-    if (this.originalCells-this.target.model.remainingCells >= Math.ceil(cfg.lethalLoss*this.originalCells)) {
-      this.ai.state='dead';
-      this.face.dispose();
-      this.visionRoot.dispose();
-      this.eyePaint.dispose();
-      for (const material of this.visionMaterials) material.dispose();
-      this.target.model.collapse();
+    if (this.state==='dead') {
+      this.updateDeath(dt);
       return;
     }
-    this.ai.update(dt,player);
+    this.priority.update(dt);
+    this.priority.checkPlayerProximity(player,this.ai.position);
+    const target=this.priority.target;
+    this.ai.update(dt,target,player);
+    if (this.ai.playerBlocked && target!==player) this.priority.blockedBy(player);
     this.updateWallAttack(dt);
     let targetYaw=0;
     if (this.state==='chase' || this.state==='windup' || this.state==='recovery') {
-      const toPlayer=player.eyes.subtract(this.ai.position);
+      const toPlayer=target.eyes.subtract(this.ai.position);
       targetYaw=this.clampAngle(this.normalizeAngle(Math.atan2(toPlayer.x,toPlayer.z)-this.ai.yaw),cfg.headTurnLimit);
     }
     const step=cfg.headTurnSpeed*dt;
@@ -136,11 +155,35 @@ export class VoxelZombie extends Enemy {
     this.syncPose();
   }
 
+  private takeProjectileDamage(amount: number): void {
+    if (this.state==='dead') return;
+    this.health=Math.max(0,this.health-amount);
+    if (this.health>0) return;
+    this.ai.state='dead';
+    this.deathTime=cfg.deathFallSeconds;
+  }
+
+  private updateDeath(dt: number): void {
+    if (this.deathCollapsed) return;
+    this.deathTime-=dt;
+    this.wallAttackLean=cfg.deathFallLean*(1-Math.max(0,this.deathTime)/cfg.deathFallSeconds);
+    this.syncPose();
+    if (this.deathTime>0) return;
+    this.face.dispose();
+    this.visionRoot.dispose();
+    this.eyePaint.dispose();
+    for (const material of this.visionMaterials) material.dispose();
+    this.target.model.collapse(1);
+    this.onDefeated?.(this.ai.position.clone());
+    this.deathCollapsed = true;
+  }
+
   private syncPose(): void {
     this.target.model.setPose(this.ai.position,this.ai.yaw);
-    this.target.model.setTiltX(this.wallAttackLean);
+    const lean=this.wallAttackLean+this.ai.attackLean*cfg.attackLean;
+    this.target.model.setTiltX(lean);
     this.target.model.setRegionYaw((_,gridY)=>gridY>=6,this.headPivot,this.headYaw);
-    const pitchSin=Math.sin(this.wallAttackLean), pitchCos=Math.cos(this.wallAttackLean);
+    const pitchSin=Math.sin(lean), pitchCos=Math.cos(lean);
     const pivotY=this.headPivot.y*pitchCos-this.headPivot.z*pitchSin;
     const pivotZ=this.headPivot.y*pitchSin+this.headPivot.z*pitchCos;
     const sin=Math.sin(this.ai.yaw), cos=Math.cos(this.ai.yaw);
@@ -149,7 +192,7 @@ export class VoxelZombie extends Enemy {
       this.ai.position.y+pivotY,
       this.ai.position.z-this.headPivot.x*sin+pivotZ*cos
     );
-    this.face.rotation.x=this.wallAttackLean;
+    this.face.rotation.x=lean;
     this.face.rotation.y=this.ai.yaw+this.headYaw;
     this.visionRoot.position.set(this.ai.position.x,this.ai.position.y+0.025,this.ai.position.z);
     this.visionRoot.rotation.y=this.ai.yaw+this.headYaw;
@@ -161,7 +204,8 @@ export class VoxelZombie extends Enemy {
     const cell=this.ai.breachCell;
     if (this.wallAttackPhase==='recovery') {
       this.wallAttackTime-=dt;
-      this.wallAttackLean=cfg.wallBreakLean*Math.max(0,this.wallAttackTime)/cfg.wallBreakRecovery;
+      const recovered=cfg.wallBreakRecovery-Math.max(0,this.wallAttackTime);
+      this.wallAttackLean=cfg.wallBreakLean*Math.max(0,1-recovered/cfg.wallBreakVisualRecovery);
       if (this.wallAttackTime>0) return;
       this.wallAttackPhase='idle';
     }

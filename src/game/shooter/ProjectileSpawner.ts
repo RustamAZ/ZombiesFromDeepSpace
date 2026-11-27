@@ -1,10 +1,13 @@
 import { Ray, TransformNode, Vector3 } from '@babylonjs/core';
 import type { ProjectileSpec, ProjectileSystem } from './ProjectileSystem';
+import type { EnemyTarget } from '../entities/enemies/Enemy';
 
 export class ProjectileSpawner {
-  constructor(private readonly muzzle: TransformNode, private readonly projectiles: ProjectileSystem) {}
+  constructor(private readonly muzzle: TransformNode, private readonly projectiles: ProjectileSystem,
+    private readonly source?: EnemyTarget) {}
 
   spawn(aim: Ray, spec: ProjectileSpec): void {
+    spec={...spec,source:this.source};
     const origin = this.muzzle.computeWorldMatrix(true).getTranslation();
     const toMuzzle = origin.subtract(aim.origin);
     const distance = toMuzzle.length();

@@ -25,7 +25,7 @@ export class PlayerCharacter {
     this.camera = new FreeCamera('eyes', new Vector3(0, config.eyeHeight - config.bodyHeight / 2, 0), scene);
     this.camera.parent = this.body;
     this.camera.minZ = 0.04;
-    this.camera.fov = 1.14;
+    this.camera.fov = 1.1;
     this.camera.inputs.clear();
   }
 
@@ -36,10 +36,14 @@ export class PlayerCharacter {
   }
 
   get feet(): Vector3 { return this.body.position.subtract(new Vector3(0,config.bodyHeight/2,0)); }
+  get maxHealth(): number { return config.maxHealth; }
+  get isDead(): boolean { return this.health<=0; }
+  get isAlive(): boolean { return !this.isDead; }
   get eyes(): Vector3 { return this.feet.add(new Vector3(0,config.eyeHeight,0)); }
   takeDamage(amount: number): void { this.health=Math.max(0,this.health-amount); }
 
-  move(strafe: number, forward: number, dt: number): void {
+  move(strafe: number, forward: number, dt: number,
+    blockers:readonly {position:Vector3;radius:number}[]=[]): void {
     if (dt <= 0) return;
     const yaw = this.camera.rotation.y;
     const step = config.runSpeed / Math.max(1, Math.hypot(strafe, forward));
@@ -52,7 +56,21 @@ export class PlayerCharacter {
       (Math.cos(yaw) * forward - Math.sin(yaw) * strafe) * step
     ));
     this.controller.integrate(dt, support, this.gravity);
-    this.body.position.copyFrom(this.controller.getPosition());
+    const next=this.controller.getPosition().clone();
+    for (const blocker of blockers) {
+      const dx=next.x-blocker.position.x, dz=next.z-blocker.position.z;
+      const minimumDistance=config.bodyRadius+blocker.radius;
+      const distance=Math.hypot(dx,dz);
+      if (distance>=minimumDistance) continue;
+      const previous=this.body.position.subtract(blocker.position);
+      const length=Math.hypot(previous.x,previous.z);
+      const nx=distance>0.0001 ? dx/distance : length>0.0001 ? previous.x/length : 1;
+      const nz=distance>0.0001 ? dz/distance : length>0.0001 ? previous.z/length : 0;
+      next.x=blocker.position.x+nx*(minimumDistance+0.01);
+      next.z=blocker.position.z+nz*(minimumDistance+0.01);
+    }
+    this.controller.setPosition(next);
+    this.body.position.copyFrom(next);
   }
 
   fire(timeSeconds: number): boolean {

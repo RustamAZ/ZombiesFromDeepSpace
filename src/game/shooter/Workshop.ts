@@ -1,4 +1,4 @@
-import { AbstractMesh, Color3, Color4, Mesh, MeshBuilder, Scene, StandardMaterial, Vector3 } from '@babylonjs/core';
+import { AbstractMesh, Color3, Color4, Mesh, MeshBuilder, Ray, Scene, StandardMaterial, Vector3 } from '@babylonjs/core';
 import { PhysicsAggregate } from '@babylonjs/core/Physics/v2/physicsAggregate';
 import { PhysicsShapeType } from '@babylonjs/core/Physics/v2/IPhysicsEnginePlugin';
 import { VoxelModel } from '../entities/voxel/VoxelModel';
@@ -13,7 +13,27 @@ import { VoxelZombie } from '../entities/enemies/voxelZombie/VoxelZombie';
 import { zombieConfig } from '../entities/enemies/voxelZombie/config';
 import type { Enemy, EnemyTarget } from '../entities/enemies/Enemy';
 import type { VoxelWorldBounds } from '../entities/voxel/VoxelImpact';
-import { cellSpacing, doorHeight, doorWidth, halfRoom, rooms, tunnels, type CrateColor, type Room } from './workshopLayout';
+import { cellSpacing, doorHeight, doorWidth, halfRoom, type Room } from './workshopLayout';
+import type { ProjectileSystem } from './ProjectileSystem';
+import { CubeTurret } from '../entities/turrets/cubeTurret/CubeTurret';
+import { CubeTurretVisual } from '../entities/turrets/cubeTurret/CubeTurretVisual';
+import { Core } from '../entities/core/Core';
+import { CoreVisual } from '../entities/core/CoreVisual';
+import { EnemyWaveController } from '../waves/EnemyWaveController';
+import type { LevelDefinition } from '../levels/LevelDefinition';
+import { LevelScenario, type ScenarioContext } from '../levels/scenarios/LevelScenario';
+import { TutorialScenario } from '../levels/tutorial/TutorialScenario';
+import { SurvivalScenario } from '../levels/firstLevel/SurvivalScenario';
+import type { PlayerProfile } from '../profile/PlayerProfile';
+import { SlidingDoor } from '../entities/doors/SlidingDoor';
+import { cubeTurretConfig } from '../entities/turrets/cubeTurret/config';
+import { RunProfile } from '../profile/RunProfile';
+import { CoinPickup } from '../entities/coins/CoinPickup';
+import { coinConfig } from '../entities/coins/config';
+import { economyConfig } from '../economy/config';
+import { CleanupButton } from '../entities/cleanup/CleanupButton';
+import { CleanupButtonVisual } from '../entities/cleanup/CleanupButtonVisual';
+import type { GameSound } from '../audio/config';
 
 const voxelSize = 0.25;
 
@@ -23,21 +43,37 @@ const paint = {
 } as const;
 type Paint = keyof typeof paint;
 type NavigationObstacle = VoxelWorldBounds & { breakable?: boolean };
-const cratePalettes: Record<CrateColor, string[]> = {
-  gold: ['#FFC558', '#CE873C', '#FFF1AE'],
-  blue: ['#597B9F', '#354D73', '#9ADCD6'],
-  coral: [paint.coral, '#963F35', '#FFD1A2']
-};
 
 export class Workshop {
   private readonly materials = new Map<Paint, StandardMaterial>();
   private readonly trim: Mesh[] = [];
   private readonly targets: VoxelDamageTarget[] = [];
+  private readonly registeredTargets = new Set<VoxelDamageTarget>();
   private readonly grid = new NavigationGrid(Math.hypot(zombieConfig.width,zombieConfig.depth)*zombieConfig.cell/2+0.03,
     zombieConfig.height*zombieConfig.cell);
+  private gridReady=false;
   private readonly obstacles = new Map<VoxelDamageTarget,NavigationObstacle[]>();
   private readonly doors = new WeakMap<VoxelWorldBounds,VoxelDamageTarget>();
   private readonly enemies: Enemy[] = [];
+  private readonly enemyTargets = new Set<VoxelDamageTarget>();
+  private readonly turrets: CubeTurret[] = [];
+  private readonly slidingDoors: SlidingDoor[]=[];
+  private readonly coins:CoinPickup[]=[];
+  readonly runProfile:RunProfile;
+  private readonly cleanupButtons: CleanupButton[]=[];
+  readonly core: Core;
+  private readonly coreTarget: EnemyTarget;
+  readonly waves: EnemyWaveController;
+  readonly scenario:LevelScenario;
+  get placedTurrets(): readonly CubeTurret[] { return this.turrets; }
+  get placedDoors(): readonly SlidingDoor[] { return this.slidingDoors; }
+  get placedCleanupButtons(): readonly CleanupButton[] { return this.cleanupButtons; }
+  enemyBlockers(playerPosition:Vector3): {position:Vector3;radius:number}[] {
+    return this.enemies.filter(enemy=>enemy.state!=='dead' &&
+      Vector3.DistanceSquared(enemy.debug.position,playerPosition)<4 &&
+      this.grid.passable(playerPosition,enemy.debug.position))
+      .map(enemy=>({position:enemy.debug.position,radius:enemy.config.personalSpaceRadius}));
+  }
   private showNav=false;
   private debugGrid?: Mesh;
   private debugPath?: Mesh;
@@ -45,10 +81,15 @@ export class Workshop {
   private debugIn=0;
   private readonly debris = new VoxelDebrisController(shooterDebrisConfig.maxBodies);
 
-  constructor(private readonly scene: Scene) {
+  constructor(private readonly scene: Scene, private readonly projectiles: ProjectileSystem,
+    private readonly profile: PlayerProfile, readonly level:LevelDefinition, onCoreDestroyed?: () => void,
+    private readonly onSound:(sound:GameSound)=>void = () => {}) {
+    this.runProfile=new RunProfile();
+    const {rooms,tunnels}=level;
     Object.entries(rooms).forEach(([id, room], i) => this.buildRoom(id, room, i + 1));
     for (const [a, b] of tunnels) this.buildTunnel(rooms[a], rooms[b]);
     this.grid.build();
+    this.gridReady=true;
     for (const [a,b] of tunnels) {
       const [ax,az]=rooms[a].cell, [bx,bz]=rooms[b].cell;
       const dx=bx-ax,dz=bz-az;
@@ -58,13 +99,60 @@ export class Workshop {
     const obstacleBreaker={
       break:(cell:VoxelWorldBounds,direction:Vector3,impact:Impact) => this.breakObstacle(cell,direction,impact)
     };
-    for (const room of Object.values(rooms)) {
-      const zombie=new VoxelZombie(scene,new Vector3(
-        room.cell[0]*cellSpacing,0,room.cell[1]*cellSpacing
-      ),this.grid,this.debris,obstacleBreaker);
-      this.enemies.push(zombie);
-      this.targets.push(zombie.target);
+    const coreRoom=rooms.core;
+    this.core=new Core(new CoreVisual(scene,new Vector3(coreRoom.cell[0]*cellSpacing,0,coreRoom.cell[1]*cellSpacing-halfRoom+2.5)),undefined,onCoreDestroyed);
+    const core=this.core;
+    this.coreTarget={
+      get feet() { return core.position; }, get eyes() { return core.position.add(new Vector3(0,1,0)); },
+      get isAlive() { return !core.isDestroyed; }, visibilityHeight:1.5, visibilityRadius:1.3,
+      takeDamage: amount=>core.takeDamage(amount)
+    };
+    const addTurret=(x:number,z:number,yaw=0)=>{
+      const turret=new CubeTurret(scene,new CubeTurretVisual(scene,new Vector3(x,0,z),yaw),projectiles,
+        ()=>this.enemies,cubeTurretConfig,()=>this.onSound('turret'));
+      const source: EnemyTarget={
+        get feet() { return turret.position.clone(); },
+        get eyes() { return turret.position.add(new Vector3(0,0.75,0)); },
+        get isAlive() { return !turret.isDestroyed; }, visibilityHeight:1, visibilityRadius:0.6,
+        takeDamage: amount=>turret.takeDamage(amount)
+      };
+      turret.setDamageSource(source);
+      this.turrets.push(turret);
+    };
+    for (const placement of level.turrets) {
+      addTurret(placement.position[0],placement.position[2]);
+      if (placement.destroyed) this.turrets[this.turrets.length-1].takeDamage(cubeTurretConfig.maxHealth);
     }
+    const turret=(id:string)=>this.turrets[level.turrets.findIndex(item=>item.id===id)];
+    const context:ScenarioContext={
+      isClean:()=>this.cleanupButtons.every(button=>this.debris.countIn(button.bounds,true)===0),
+      doorsRepaired:()=>this.slidingDoors.every(door=>!door.isDamaged && door.state==='closed'),
+      turretReady:id=>!!turret(id) && !turret(id).isDestroyed && turret(id).ammo===turret(id).maxAmmo,
+      emptyTurret:id=>turret(id)?.emptyAmmo(),
+      addCoins:amount=>this.runProfile.addCoins(amount),
+      ensureCoins:amount=>this.runProfile.addCoins(Math.max(0,amount-this.runProfile.coins-
+        this.coins.length*economyConfig.coinsPerZombie)),
+      serviceCost:()=>this.slidingDoors.filter(door=>door.isDamaged).length*economyConfig.doorRepairCost+
+        this.turrets.reduce((sum,item)=>sum+(item.isDestroyed?economyConfig.turretRebuildCost:
+          item.ammo<item.maxAmmo?economyConfig.turretRefillCost:0),0)
+    };
+    this.scenario=level.id==='tutorial' ? new TutorialScenario(context) : new SurvivalScenario(context);
+    this.waves=new EnemyWaveController(level.waves,()=>this.spawnZombie(obstacleBreaker),{
+      ready:()=>this.scenario.requirements.complete,
+      completed:wave=>this.scenario.onWaveCompleted(wave),
+      started:wave=>this.scenario.onWaveStarted(wave)
+    },()=>this.profile.addExperience(2));
+  }
+
+  needsCleaning(id:string):boolean {
+    const button=this.cleanupButtons.find(item=>item.roomId===id);
+    return this.waves.canPurchase && !!button && this.debris.countIn(button.bounds)>0;
+  }
+
+  nearestRoomId(x:number,z:number):string {
+    return Object.entries(this.level.rooms).sort(([,a],[,b])=>
+      Math.hypot(x-a.cell[0]*cellSpacing,z-a.cell[1]*cellSpacing)-
+      Math.hypot(x-b.cell[0]*cellSpacing,z-b.cell[1]*cellSpacing))[0][0];
   }
 
   hit(mesh: AbstractMesh, point: Vector3, direction: Vector3, normal: Vector3, impact: Impact): boolean {
@@ -74,6 +162,7 @@ export class Workshop {
       if (target.model.hitLooseDebris(mesh, point, direction, impact.impactRadius)) affected = true;
     }
     for (const target of this.targets) {
+      if (this.enemyTargets.has(target) && !target.model.getIntactMeshes().includes(mesh as Mesh)) continue;
       if (!target.hit(point, normal, impact)) continue;
       affected = true;
       this.refreshNavigationObstacle(target);
@@ -102,9 +191,29 @@ export class Workshop {
   }
 
 
-  updateEnemies(dt: number, player: EnemyTarget): void {
+  updateEnemies(dt: number, player: EnemyTarget, timeSeconds: number): void {
     this.debris.update(dt);
+    for (let i=this.coins.length-1;i>=0;--i) {
+      this.coins[i].update(dt,player.feet);
+      if (!this.coins[i].canPickUp(player.feet)) continue;
+      this.runProfile.addCoins(economyConfig.coinsPerZombie);
+      this.onSound('coin');
+      this.coins[i].dispose(); this.coins.splice(i,1);
+    }
     for (const enemy of this.enemies) enemy.update(dt,player);
+    this.waves.update(dt);
+    for (let i=this.enemies.length-1;i>=0;--i) {
+      const enemy=this.enemies[i];
+      if (!(enemy instanceof VoxelZombie) || !enemy.deathComplete || this.debris.hasOwner(enemy.target.model)) continue;
+      this.enemies.splice(i,1);
+      this.enemyTargets.delete(enemy.target);
+      const index=this.targets.indexOf(enemy.target);
+      if (index>=0) this.targets.splice(index,1);
+      enemy.target.model.disposeAll();
+    }
+    for (const button of this.cleanupButtons) button.setActive(this.needsCleaning(button.roomId));
+    for (const turret of this.turrets) turret.update(dt,timeSeconds);
+    for (const door of this.slidingDoors) door.update(dt,point=>Vector3.DistanceSquared(point,player.feet)<1.4);
     if (this.showNav && (this.debugIn-=dt)<=0) {
       this.debugIn=0.2;
       if (this.debugRevision!==this.grid.revision) {
@@ -138,6 +247,102 @@ export class Workshop {
     this.showNav=!this.showNav; this.debugIn=0; this.debugRevision=-1;
     this.debugGrid?.dispose(); this.debugPath?.dispose();
     this.debugGrid=undefined; this.debugPath=undefined;
+  }
+
+  tryInteract(position: Vector3, aim:Ray): boolean {
+    const action=this.getInteractions(position,aim);
+    if (!action.e) return false;
+    const cleanup=action.e==='cleanup' ? this.cleanupButtons.find(button=>
+      button.inRange(position) && this.needsCleaning(button.roomId) &&
+      this.aimedAt(aim,button.position.add(new Vector3(0,0.7,0)),0.65)) : undefined;
+    if (cleanup) {
+      this.debris.vacuum(cleanup.bounds,cleanup.position.add(new Vector3(0,0.2,0)),cleanup.config.suctionSeconds);
+      cleanup.setActive(false);
+      this.onSound('vacuum');
+      return true;
+    }
+    const door=this.nearDoor(position);
+    const changed=door?.tryInteract(position) ?? false;
+    if (changed) this.onSound('door');
+    return changed;
+  }
+
+  getInteractions(position:Vector3,aim:Ray): {e?:'cleanup'|'open'|'close';q?:'door'|'ammo'|'turret';cost?:number;
+    ePosition?:Vector3;qPosition?:Vector3} {
+    const button=this.cleanupButtons.find(item=>item.inRange(position) && this.needsCleaning(item.roomId) &&
+      this.aimedAt(aim,item.position.add(new Vector3(0,0.7,0)),0.65));
+    const candidateDoor=this.nearDoor(position);
+    const door=candidateDoor && this.aimedAt(aim,candidateDoor.position.add(new Vector3(0,1.5,0)),1.8)
+      ? candidateDoor : undefined;
+    const candidateTurret=this.nearTurret(position);
+    const turret=candidateTurret && this.aimedAt(aim,candidateTurret.position.add(new Vector3(0,0.65,0)),0.8)
+      ? candidateTurret : undefined;
+    const result:{e?:'cleanup'|'open'|'close';q?:'door'|'ammo'|'turret';cost?:number;
+      ePosition?:Vector3;qPosition?:Vector3}={};
+    if (button) { result.e='cleanup'; result.ePosition=button.position; }
+    else if (door) {
+      const opening=door.state==='closed' || door.state==='closing';
+      if (!opening || !door.isJammed) {
+        result.e=opening?'open':'close';
+        result.ePosition=door.position.clone();
+      }
+    }
+    if (!this.waves.canPurchase) return result;
+    const doorDistance=door ? Vector3.DistanceSquared(door.position,position) : Infinity;
+    const turretDistance=turret ? Vector3.DistanceSquared(turret.position,position) : Infinity;
+    if (door && doorDistance<=turretDistance && door.state==='closed' && door.isDamaged) {
+      result.q='door'; result.cost=economyConfig.doorRepairCost; result.qPosition=door.position.clone();
+    } else if (turret) {
+      if (turret.isDestroyed) { result.q='turret'; result.cost=economyConfig.turretRebuildCost; }
+      else if (turret.ammo<turret.maxAmmo) { result.q='ammo'; result.cost=economyConfig.turretRefillCost; }
+      if (result.q) result.qPosition=turret.position.clone();
+    }
+    return result;
+  }
+
+  tryPurchase(position:Vector3,aim:Ray): boolean {
+    if (!this.waves.canPurchase) return false;
+    const action=this.getInteractions(position,aim);
+    if (!action.q || !action.cost || !this.runProfile.spendCoins(action.cost)) return false;
+    if (action.q==='door') {
+      const old=this.nearDoor(position)!;
+      const index=this.slidingDoors.indexOf(old);
+      for (const target of old.targets) {
+        this.unregisterVoxelDoor(target);
+        this.registeredTargets.delete(target);
+        const targetIndex=this.targets.indexOf(target);
+        if (targetIndex>=0) this.targets.splice(targetIndex,1);
+        target.model.disposeAll();
+      }
+      this.slidingDoors[index]=this.makeDoor(old.position.clone(),old.alongX);
+    } else {
+      const turret=this.nearTurret(position)!;
+      if (action.q==='turret') turret.rebuild();
+      else turret.reload(turret.maxAmmo);
+    }
+    this.onSound('purchase');
+    return true;
+  }
+
+  private nearDoor(position:Vector3): SlidingDoor|undefined {
+    return this.slidingDoors.filter(item=>Vector3.DistanceSquared(item.position,position)<=item.config.interactionRange**2)
+      .sort((a,b)=>Vector3.DistanceSquared(a.position,position)-Vector3.DistanceSquared(b.position,position))[0];
+  }
+  private nearTurret(position:Vector3): CubeTurret|undefined {
+    return this.turrets.filter(item=>Vector3.DistanceSquared(item.position,position)<=2.4**2)
+      .sort((a,b)=>Vector3.DistanceSquared(a.position,position)-Vector3.DistanceSquared(b.position,position))[0];
+  }
+
+  private aimedAt(aim:Ray,center:Vector3,radius:number): boolean {
+    const offset=center.subtract(aim.origin);
+    const along=Vector3.Dot(offset,aim.direction);
+    if (along<=0) return false;
+    const miss=offset.lengthSquared()-along*along;
+    if (miss>radius*radius) return false;
+    const entry=Math.max(0,along-Math.sqrt(Math.max(0,radius*radius-miss)));
+    const obstruction=this.scene.pickWithRay(new Ray(aim.origin,aim.direction,entry),mesh=>
+      mesh.isPickable && mesh.checkCollisions && mesh.isEnabled() && !mesh.metadata?.voxelDebris);
+    return !obstruction?.hit;
   }
 
   private box(color: Paint, x: number, y: number, z: number, width: number,
@@ -174,11 +379,16 @@ export class Workshop {
   }
 
   private buildRoom(id: string, room: Room, number: number): void {
+    const {rooms,tunnels}=this.level;
     const [cx, cz] = room.cell;
     const x = cx * cellSpacing, z = cz * cellSpacing, size = 2 * halfRoom;
     const neighbors = tunnels.flatMap(([a, b]) =>
       a === id ? [rooms[b].cell] : b === id ? [rooms[a].cell] : []);
     this.box('floor', x, -0.2, z, size, 0.4, size, true);
+    this.cleanupButtons.push(new CleanupButton(id,
+      new CleanupButtonVisual(this.scene,new Vector3(x+5.6,0,z+4)),
+      {min:new Vector3(x-halfRoom,-10,z-halfRoom),
+        max:new Vector3(x+halfRoom,10,z+(id==='spawn'?halfRoom:cellSpacing-halfRoom))}));
     this.box('teal', x, 5.45, z, size, 0.3, size, true);
     for (let n = -6; n <= 6; n += 2) {
       this.box('grout', x + n, 0.003, z, 0.026, 0.006, size);
@@ -204,8 +414,6 @@ export class Workshop {
       if (bit === '1') this.box(room.accent, x + ((i % 3) - 1) * 0.22,
         4.12 + (2 - Math.floor(i / 3)) * 0.22, z + halfRoom - 0.36, 0.225, 0.225, 0.1);
     }
-    for (const [ox, oz, color, material] of room.crates) this.crate(x + ox, z + oz, color, material);
-    if (room.balcony) this.buildBalcony(x, z);
     this.mergeTrim();
   }
 
@@ -258,41 +466,70 @@ export class Workshop {
       section('navy', side * (doorWidth / 2 + 0.15), doorHeight / 2, 0, 0.3, doorHeight, length, true);
       section('mint', side * (doorWidth / 2 - 0.02), 1.12, 0, 0.05, 0.11, length);
       const end = side * length / 2;
-      this.barrier(x + (alongX ? end : 0), z + (alongX ? 0 : end), alongX);
+      if (!this.level.singleTunnelDoor || side===-1)
+        this.slidingDoors.push(this.makeDoor(new Vector3(x+(alongX?end:0),0,z+(alongX?0:end)),alongX));
     }
     for (const along of [-1.4, 0, 1.4]) section('white', 0, doorHeight - 0.06, along, 1.65, 0.12, 0.22);
     this.mergeTrim();
   }
 
-  private barrier(x: number, z: number, alongX: boolean): void {
-    const width = Math.round(doorWidth / voxelSize);
-    const height = Math.round(doorHeight / voxelSize);
-    this.voxelBlock(x, z, alongX ? 2 : width, alongX ? width : 2, height, 'soft',
-      ['#EB744C', '#D55A40', '#FFD36A', '#F4EBCB', '#354754'], (i, j, h) => {
-        const u = alongX ? j : i;
-        const r = Math.hypot(u - (width - 1) / 2, h - (height - 1) / 2);
-        if (r <= 1.2) return 4;
-        if (r <= 2.35) return 3;
-        if (r <= 3.45) return 2;
-        return h % 3 === 0 || (u + 2 * Math.floor(h / 3)) % 5 === 0 ? 1 : 0;
-      },true);
+  private spawnZombie(obstacleBreaker: { break(cell: VoxelWorldBounds, direction: Vector3, impact: Impact): boolean }): Enemy {
+    const zombie=new VoxelZombie(this.scene,this.zombieSpawnPosition(),this.grid,this.debris,
+      obstacleBreaker,()=>this.enemies,this.coreTarget,
+      position=>this.coins.push(new CoinPickup(this.scene,position.add(new Vector3(0,coinConfig.spawnHeight,0)))));
+    this.enemies.push(zombie); this.targets.push(zombie.target); this.enemyTargets.add(zombie.target);
+    return zombie;
   }
 
-  private buildBalcony(x: number, z: number): void {
-    const height = 2, run = 5;
-    this.box('floor', x - 4, height / 2 - 0.11, z + 1.5, 3.6, 0.22,
-      Math.hypot(height, run), true, -Math.atan2(height, run));
-    this.box('teal', x, height - 0.14, z + 6, 15.6, 0.28, 4, true, 0, true);
-    this.box('yellow', x + 2.8, height, z + 4.04, 9.8, 0.14, 0.18);
-    for (const offset of [-1.7, 2.8, 7.4]) this.box('navy', x + offset, 2.37, z + 4.07, 0.16, 0.86, 0.16, true);
-    this.box('yellow', x + 2.85, 2.83, z + 4.07, 9.3, 0.14, 0.16, true);
+  private zombieSpawnPosition(): Vector3 {
+    const [roomX,roomZ]=this.level.rooms.spawn.cell;
+    const centerX=roomX*cellSpacing, centerZ=roomZ*cellSpacing;
+    const extent=halfRoom-this.grid.radius-0.5;
+    const minDistance=(zombieConfig.personalSpaceRadius*2+0.3)**2;
+    const available=(position:Vector3): boolean =>
+      this.grid.passable(position,position) &&
+      this.enemies.every(enemy=>enemy.state==='dead' ||
+        Vector3.DistanceSquared(position,enemy.debug.position)>=minDistance) &&
+      this.cleanupButtons.every(button=>Vector3.DistanceSquared(position,button.position)>minDistance);
+    for (let attempt=0;attempt<48;++attempt) {
+      const position=new Vector3(centerX+(Math.random()*2-1)*extent,0,centerZ+(Math.random()*2-1)*extent);
+      if (available(position)) return position;
+    }
+    for (let x=-Math.floor(extent);x<=extent;++x)
+      for (let z=-Math.floor(extent);z<=extent;++z) {
+        const position=new Vector3(centerX+x,0,centerZ+z);
+        if (available(position)) return position;
+      }
+    return new Vector3(centerX,0,centerZ);
   }
 
-  private crate(x: number, z: number, color: CrateColor, material: VoxelMaterialType = 'soft'): void {
-    this.voxelBlock(x, z, 6, 6, 6, material, cratePalettes[color], (i, j, k) => {
-      if (k === 0 || k === 5) return 2;
-      return i === 0 || i === 5 || j === 0 && i === k ? 1 : 0;
-    });
+  private makeDoor(position:Vector3,alongX:boolean): SlidingDoor {
+    return new SlidingDoor(this.scene,this.debris,position,alongX,doorWidth,
+      (target,initial)=>this.registerVoxelDoor(target,initial),target=>this.unregisterVoxelDoor(target));
+  }
+
+  private registerVoxelDoor(target: VoxelDamageTarget, initial: boolean): void {
+    if (!this.registeredTargets.has(target)) {
+      this.registeredTargets.add(target);
+      this.targets.push(target);
+    }
+    const cells=target.model.getSolidContactBounds().map(cell=>({...cell,breakable:true}));
+    if (initial && !this.gridReady) for (const cell of cells) this.grid.add(cell);
+    else this.grid.replace([],cells,target.model.getWorldBounds());
+    this.obstacles.set(target,cells);
+    for (const cell of cells) this.doors.set(cell,target);
+    for (const mesh of target.model.getIntactMeshes()) mesh.checkCollisions=mesh.isPickable=true;
+    target.model.setStaticCollisionEnabled(true);
+  }
+
+  private unregisterVoxelDoor(target: VoxelDamageTarget): void {
+    const cells=this.obstacles.get(target);
+    if (!cells) return;
+    this.grid.replace(cells,[],target.model.getWorldBounds());
+    for (const cell of cells) this.doors.delete(cell);
+    this.obstacles.delete(target);
+    for (const mesh of target.model.getIntactMeshes()) mesh.checkCollisions=mesh.isPickable=false;
+    target.model.setStaticCollisionEnabled(false);
   }
 
   private voxelBlock(x: number, z: number, width: number, depth: number, height: number,

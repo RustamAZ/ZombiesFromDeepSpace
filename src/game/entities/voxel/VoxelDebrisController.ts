@@ -1,3 +1,7 @@
+import { Vector3 } from '@babylonjs/core';
+
+type VacuumData = { start: Vector3; destination: Vector3; elapsed: number; duration: number };
+
 export class VoxelDebrisController {
   private readonly queue: Array<{
     evict:()=>void;
@@ -5,23 +9,69 @@ export class VoxelDebrisController {
     updateFallback:(dt:number)=>void;
     isVisible:()=>boolean;
     physical:boolean;
+    position?:()=>Vector3;
+    move?:(point:Vector3, scale:number)=>void;
+    vacuum?:VacuumData;
+    owner?:object;
   }> = [];
 
   constructor(private readonly capacity: number) {}
 
   register(evict: () => void, deactivatePhysics: () => void,
-    updateFallback: (dt: number) => void, isVisible: () => boolean): void {
-    this.queue.push({evict,deactivatePhysics,updateFallback,isVisible,physical:true});
+    updateFallback: (dt: number) => void, isVisible: () => boolean, physical = true,
+    position?:()=>Vector3, move?:(point:Vector3, scale:number)=>void, owner?:object): void {
+    this.queue.push({evict,deactivatePhysics,updateFallback,isVisible,physical,position,move,owner});
     this.trimPhysicsOverflow();
     this.trimInvisibleOverflow();
   }
 
-  update(dt: number): void {
+  hasOwner(owner:object):boolean { return this.queue.some(entry=>entry.owner===owner); }
+
+  evictOwner(owner:object): void {
+    for (let i=this.queue.length-1;i>=0;--i) {
+      if (this.queue[i].owner!==owner) continue;
+      this.queue.splice(i,1)[0].evict();
+    }
+  }
+
+  countIn(bounds:{min:Vector3;max:Vector3}, includeVacuum=false): number {
+    let count=0;
     for (const entry of this.queue) {
-      if (!entry.physical) entry.updateFallback(dt);
+      const point=entry.position?.();
+      if (point && (includeVacuum || !entry.vacuum) && point.x>=bounds.min.x && point.x<=bounds.max.x &&
+        point.z>=bounds.min.z && point.z<=bounds.max.z) ++count;
+    }
+    return count;
+  }
+
+  update(dt: number): void {
+    for (let i=this.queue.length-1;i>=0;--i) {
+      const entry=this.queue[i];
+      if (entry.vacuum) {
+        const suction=entry.vacuum;
+        suction.elapsed=Math.min(suction.duration,suction.elapsed+dt);
+        const t=suction.elapsed/suction.duration;
+        const eased=t*t*(3-2*t);
+        const shrink=Math.max(0,1-Math.max(0,eased-0.88)/0.12);
+        entry.move?.(Vector3.Lerp(suction.start,suction.destination,eased),shrink);
+        if (t>=1) { this.queue.splice(i,1); entry.evict(); }
+      } else if (!entry.physical) entry.updateFallback(dt);
     }
     this.trimPhysicsOverflow();
     this.trimInvisibleOverflow();
+  }
+
+  vacuum(bounds:{min:Vector3;max:Vector3}, destination:Vector3, duration=0.65): number {
+    let count=0;
+    for (const entry of this.queue) {
+      const point=entry.position?.();
+      if (!point || entry.vacuum || point.x<bounds.min.x || point.x>bounds.max.x ||
+        point.z<bounds.min.z || point.z>bounds.max.z) continue;
+      if (entry.physical) { entry.deactivatePhysics(); entry.physical=false; }
+      entry.vacuum={start:point,destination:destination.clone(),elapsed:0,duration};
+      ++count;
+    }
+    return count;
   }
 
   private trimPhysicsOverflow(): void {

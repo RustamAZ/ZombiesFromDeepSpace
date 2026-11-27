@@ -89,6 +89,87 @@ export class NavigationGrid {
     return this.segmentPassable(a,b,false);
   }
 
+  breakableAt(p:Vector3): NavigationCell | undefined {
+    for (const cell of this.columns.get(key(Math.floor(p.x),Math.floor(p.z))) ?? []) {
+      if (!cell.breakable || cell.max.y<=p.y || cell.min.y>=p.y+this.height) continue;
+      const dx=Math.max(cell.min.x-p.x,0,p.x-cell.max.x);
+      const dz=Math.max(cell.min.z-p.z,0,p.z-cell.max.z);
+      if (dx*dx+dz*dz<=this.radius*this.radius) return cell;
+    }
+    return undefined;
+  }
+
+  breakableAhead(from:Vector3,toward:Vector3,distance:number): NavigationCell | undefined {
+    const direction=toward.subtract(from); direction.y=0;
+    if (direction.lengthSquared()<0.0001) return undefined;
+    direction.normalize();
+    for (let step=0;step<=distance;step+=0.12) {
+      const sample=from.add(direction.scale(step));
+      const blocker=this.blockerAt(sample,false);
+      if (blocker?.breakable) return blocker;
+      if (blocker) return undefined;
+    }
+    return undefined;
+  }
+
+  breakableWithinReach(from:Vector3,toward:Vector3,reach:number): NavigationCell | undefined {
+    const direction=toward.subtract(from); direction.y=0;
+    if (direction.lengthSquared()<0.0001) return undefined;
+    direction.normalize();
+    const seen=new Set<Solid>();
+    let nearest:NavigationCell|undefined;
+    let best=Infinity;
+    for (let x=Math.floor(from.x-reach);x<=Math.floor(from.x+reach);++x) {
+      for (let z=Math.floor(from.z-reach);z<=Math.floor(from.z+reach);++z) {
+        for (const cell of this.columns.get(key(x,z)) ?? []) {
+          if (seen.has(cell)) continue;
+          seen.add(cell);
+          if (!cell.breakable || cell.max.y<=from.y || cell.min.y>=from.y+this.height) continue;
+          const dx=Math.max(cell.min.x-from.x,0,from.x-cell.max.x);
+          const dz=Math.max(cell.min.z-from.z,0,from.z-cell.max.z);
+          if (dx*dx+dz*dz>reach*reach) continue;
+          const center=cell.min.add(cell.max).scaleInPlace(0.5);
+          const forward=(center.x-from.x)*direction.x+(center.z-from.z)*direction.z;
+          if (forward < -0.15) continue;
+          const lateral=(center.x-from.x)*direction.z-(center.z-from.z)*direction.x;
+          const score=dx*dx+dz*dz+0.15*lateral*lateral+0.06*(center.y-from.y-this.height*0.5)**2;
+          if (score<best) { best=score; nearest=cell; }
+        }
+      }
+    }
+    return nearest;
+  }
+
+  doorAssaultSpots(from:Vector3,toward:Vector3,planned?:NavigationCell): {position:Vector3;cell:NavigationCell}[] {
+    const forward=toward.subtract(from); forward.y=0;
+    if (forward.lengthSquared()<0.01) return [];
+    forward.normalize();
+    const side=new Vector3(forward.z,0,-forward.x);
+    const laneSpacing=this.radius*2+0.05;
+    let anchor=planned;
+    if (!anchor || Vector3.DistanceSquared(from,anchor.min.add(anchor.max).scaleInPlace(0.5))>25) {
+      anchor=undefined;
+      for (const offset of [0,-laneSpacing,laneSpacing]) {
+        const origin=from.add(side.scale(offset));
+        anchor=this.breakableAhead(origin,origin.add(forward),4.5);
+        if (anchor) break;
+      }
+    }
+    if (!anchor) return [];
+    const center=anchor.min.add(anchor.max).scaleInPlace(0.5);
+    const cellSize=Math.max(anchor.max.x-anchor.min.x,anchor.max.z-anchor.min.z);
+    const standOff=this.radius+cellSize/2+0.08;
+    const spots: {position:Vector3;cell:NavigationCell}[]=[];
+    for (const offset of [0,-laneSpacing,laneSpacing,-laneSpacing*2,laneSpacing*2]) {
+      const lane=center.add(side.scale(offset));
+      const position=lane.subtract(forward.scale(standOff)); position.y=from.y;
+      if (!this.passable(position,position)) continue;
+      const cell=this.breakableAhead(position,lane,standOff+0.35);
+      if (cell) spots.push({position,cell});
+    }
+    return spots;
+  }
+
   // A usable gap in a voxel doorway may lie entirely between two metre-grid lanes.
   addDoorLanes(x: number, z: number, alongX: boolean, width: number, cellSize: number): void {
     const lanes=Math.round(width/cellSize)*2;
