@@ -32,6 +32,11 @@ entities/weapons/
 
 ## Defense Run
 
+- Construction uses `CarrySlot` (one generic carried item), `BuildCatalog` (type-to-price/factory), and `PlacementGrid` (stable room/cell IDs). No purchase/carry/placement logic belongs in CubeTurret. Workshop composes the catalog with concrete factories. BuildingView is only the temporary shop/held-item/preview presentation.
+- A carried construction kit disables firing without replacing the equipped weapon. E buys/picks up; Q installs with a fresh placement check and consumes the kit only after a successful placement. Buying uses RunProfile coins and the existing wave purchase restriction; installation remains possible during a wave.
+- ZombieTargetPriority chooses an intention once on actual room entry, not in corridors or every frame. Armed turret weights: player 30%, turrets 40%, core 30%; empty turrets: 45/10/45; no turrets: 50/0/50. Available targets require a strict non-breaching route. Door breaches recalculate paths, not intention. Player body-block is the only interrupt; projectile damage slows/knocks back but does not change target.
+- Construction slots remain occupied after turret destruction for rebuilding. Dynamic turrets must be registered with combat targets and UI together. UI arrays grow when the turret registry grows.
+
 - `Workshop` owns the current level only: rooms, doors, enemies, turrets, core and navigation. It must not own permanent player data.
 - `PlayerProfile` owns gold, experience and future persistent resources. Access external persistence only through `ProfileRepository`; a future Yandex adapter must implement that interface rather than leak SDK calls into game objects.
 - `EnemyWaveController` owns wave phases and live/queued counts. It spawns enemies through a callback and learns about a death by observing the enemy state; it does not decide enemy behavior.

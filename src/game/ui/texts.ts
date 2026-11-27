@@ -29,8 +29,8 @@ export const texts={
   cleanupToContinue:'Чтобы продолжить, уберись в комнатах',
   defendMe:'Защищай меня',
   objective:'Отбивай волны зомби. Не дай им уничтожить ядро. Между волнами ремонтируй двери и пополняй патроны турелей.',
-  interactE:{cleanup:'Убрать мусор',open:'Открыть',close:'Закрыть'},
-  interactQ:{door:'Починить дверь',ammo:'Пополнить патроны',turret:'Купить турель'},
+  interactE:{cleanup:'Убрать мусор',open:'Открыть',close:'Закрыть',buy:'Купить комплект',take:'Взять'},
+  interactQ:{door:'Починить дверь',ammo:'Пополнить патроны',turret:'Купить турель',install:'Установить'},
   worldPrompts:{repair:'Ремонт',ammo:'Патроны',rebuild:'Купить турель',cleanup:'Убери'},
   defeat:'Оборона разрушена',
   restart:'Начать заново'

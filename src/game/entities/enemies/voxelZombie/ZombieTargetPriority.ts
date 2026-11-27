@@ -1,46 +1,32 @@
-import type { Vector3 } from '@babylonjs/core';
 import type { EnemyTarget } from '../Enemy';
-import { zombieConfig } from './config';
-
+import { targetingConfig as cfg } from './targetingConfig';
+export interface TargetContext {
+  roomId:string|undefined;player:EnemyTarget;playerAvailable:boolean;playerDistance:number;
+  turrets:readonly {target:EnemyTarget;armed:boolean;distance:number}[];
+}
 export class ZombieTargetPriority {
-  private retaliateAgainst?: EnemyTarget;
-  private remainingSeconds = 0;
-  private playerWasInsideProximity = false;
-
-  constructor(private readonly core: EnemyTarget) {}
-
-  get target(): EnemyTarget {
-    return this.remainingSeconds>0 && this.retaliateAgainst?.isAlive ? this.retaliateAgainst : this.core;
-  }
-
-  hitBy(source: EnemyTarget | undefined): void {
-    if (source?.isAlive && Math.random()<zombieConfig.retaliationChance) {
-      this.retaliateAgainst=source;
-      this.remainingSeconds=zombieConfig.retaliationSeconds;
+  private roomId?:string;
+  private intent:'player'|'turrets'|'core'='core';
+  private current?:EnemyTarget;
+  private blocked?:EnemyTarget;
+  constructor(private readonly core:EnemyTarget) {}
+  get target():EnemyTarget { return this.blocked?.isAlive?this.blocked:this.current?.isAlive?this.current:this.core; }
+  blockedBy(player:EnemyTarget):void { if(player.isAlive)this.blocked=player; }
+  update(context:TargetContext):void {
+    if(this.blocked && (!this.blocked.isAlive || context.playerDistance>cfg.blockedReleaseRange))this.blocked=undefined;
+    const turrets=context.turrets.filter(t=>t.target.isAlive);
+    if(context.roomId!==undefined && this.roomId!==context.roomId) {
+      this.roomId=context.roomId;
+      const weights=turrets.some(t=>t.armed)?cfg.armed:turrets.length?cfg.empty:cfg.none;
+      const roll=Math.random();
+      this.intent=roll<weights.player?(context.playerAvailable?'player':'core'):roll<weights.player+weights.turret?'turrets':'core';
+      this.current=undefined;
     }
-  }
-
-  blockedBy(player:EnemyTarget):void {
-    if (!player.isAlive) return;
-    this.retaliateAgainst=player;
-    this.remainingSeconds=zombieConfig.retaliationSeconds;
-  }
-
-  checkPlayerProximity(player: EnemyTarget, zombiePosition: Vector3): void {
-    const delta=player.feet.subtract(zombiePosition);
-    const inside=player.isAlive && delta.x*delta.x+delta.z*delta.z<=
-      zombieConfig.proximityAggroRadius*zombieConfig.proximityAggroRadius;
-    if (inside && !this.playerWasInsideProximity && Math.random()<zombieConfig.proximityAggroChance) {
-      this.retaliateAgainst=player;
-      this.remainingSeconds=zombieConfig.retaliationSeconds;
-    }
-    if (inside && this.retaliateAgainst===player)
-      this.remainingSeconds=Math.max(this.remainingSeconds,zombieConfig.retaliationSeconds);
-    this.playerWasInsideProximity=inside;
-  }
-
-  update(dt: number): void {
-    this.remainingSeconds=Math.max(0,this.remainingSeconds-dt);
-    if (!this.retaliateAgainst?.isAlive) this.retaliateAgainst=undefined;
+    if(this.intent==='turrets') {
+      if(!this.current?.isAlive || !turrets.some(t=>t.target===this.current)) {
+        this.current=[...turrets].sort((a,b)=>Number(b.armed)-Number(a.armed)||a.distance-b.distance)[0]?.target;
+        if(!this.current){this.intent='core';this.current=this.core;}
+      }
+    } else this.current=this.intent==='player'&&context.player.isAlive?context.player:this.core;
   }
 }

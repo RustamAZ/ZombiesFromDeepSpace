@@ -34,6 +34,11 @@ import { economyConfig } from '../economy/config';
 import { CleanupButton } from '../entities/cleanup/CleanupButton';
 import { CleanupButtonVisual } from '../entities/cleanup/CleanupButtonVisual';
 import type { GameSound } from '../audio/config';
+import { CarrySlot } from '../entities/carry/CarrySlot';
+import { PlacementGrid } from '../building/PlacementGrid';
+import { BuildCatalog } from '../building/BuildCatalog';
+import { BuildingView } from '../building/BuildingView';
+import { buildingConfig } from '../building/config';
 
 const voxelSize = 0.25;
 
@@ -45,6 +50,13 @@ type Paint = keyof typeof paint;
 type NavigationObstacle = VoxelWorldBounds & { breakable?: boolean };
 
 export class Workshop {
+  readonly carry=new CarrySlot();
+  private readonly placement=new PlacementGrid();
+  private readonly catalog=new BuildCatalog();
+  private kitAvailable=false;
+  private readonly shopPosition:Vector3;
+  private readonly buildingView:BuildingView;
+  private candidate?:{id:string;position:Vector3;valid:boolean};
   private readonly materials = new Map<Paint, StandardMaterial>();
   private readonly trim: Mesh[] = [];
   private readonly targets: VoxelDamageTarget[] = [];
@@ -57,6 +69,8 @@ export class Workshop {
   private readonly enemies: Enemy[] = [];
   private readonly enemyTargets = new Set<VoxelDamageTarget>();
   private readonly turrets: CubeTurret[] = [];
+  private readonly turretTargets=new Map<CubeTurret,EnemyTarget>();
+  private readonly accessibility=new Map<string,{revision:number;reachable:boolean}>();
   private readonly slidingDoors: SlidingDoor[]=[];
   private readonly coins:CoinPickup[]=[];
   readonly runProfile:RunProfile;
@@ -117,12 +131,16 @@ export class Workshop {
         takeDamage: amount=>turret.takeDamage(amount)
       };
       turret.setDamageSource(source);
+      this.turretTargets.set(turret,source);
       this.turrets.push(turret);
     };
     for (const placement of level.turrets) {
       addTurret(placement.position[0],placement.position[2]);
       if (placement.destroyed) this.turrets[this.turrets.length-1].takeDamage(cubeTurretConfig.maxHealth);
     }
+    this.catalog.register('cube-turret',{price:buildingConfig.price,create:position=>{addTurret(position.x,position.z);this.turrets[this.turrets.length-1].reload(50);}});
+    this.shopPosition=new Vector3(coreRoom.cell[0]*cellSpacing+5,0,coreRoom.cell[1]*cellSpacing-halfRoom+1);
+    this.buildingView=new BuildingView(scene,this.shopPosition);
     const turret=(id:string)=>this.turrets[level.turrets.findIndex(item=>item.id===id)];
     const context:ScenarioContext={
       isClean:()=>this.cleanupButtons.every(button=>this.debris.countIn(button.bounds,true)===0),
@@ -250,6 +268,13 @@ export class Workshop {
   }
 
   tryInteract(position: Vector3, aim:Ray): boolean {
+    const special=this.buildAction(position,aim);
+    if(special==='take') { if(this.carry.take(this.catalog.kit('cube-turret'))) {this.kitAvailable=false;return true;}return false; }
+    if(special==='buy') {
+      const offer=this.catalog.get('cube-turret')!;
+      if(!this.runProfile.spendCoins(offer.price))return false;
+      this.kitAvailable=true;this.onSound('purchase');return true;
+    }
     const action=this.getInteractions(position,aim);
     if (!action.e) return false;
     const cleanup=action.e==='cleanup' ? this.cleanupButtons.find(button=>
@@ -267,8 +292,11 @@ export class Workshop {
     return changed;
   }
 
-  getInteractions(position:Vector3,aim:Ray): {e?:'cleanup'|'open'|'close';q?:'door'|'ammo'|'turret';cost?:number;
+  getInteractions(position:Vector3,aim:Ray): {e?:'cleanup'|'open'|'close'|'buy'|'take';q?:'door'|'ammo'|'turret'|'install';cost?:number;
     ePosition?:Vector3;qPosition?:Vector3} {
+    if(this.carry.item)return this.candidate?.valid?{q:'install',qPosition:this.candidate.position}:{};
+    const build=this.buildAction(position,aim);
+    if(build)return {e:build,ePosition:this.shopPosition};
     const button=this.cleanupButtons.find(item=>item.inRange(position) && this.needsCleaning(item.roomId) &&
       this.aimedAt(aim,item.position.add(new Vector3(0,0.7,0)),0.65));
     const candidateDoor=this.nearDoor(position);
@@ -301,6 +329,12 @@ export class Workshop {
   }
 
   tryPurchase(position:Vector3,aim:Ray): boolean {
+    if(this.carry.item) {
+      this.updatePlacement(position,aim);
+      const cell=this.candidate,definition=this.catalog.get(this.carry.item.placementType);
+      if(!cell?.valid||!definition||!this.placement.occupy(cell.id))return false;
+      definition.create(cell.position);this.carry.release();this.candidate=undefined;return true;
+    }
     if (!this.waves.canPurchase) return false;
     const action=this.getInteractions(position,aim);
     if (!action.q || !action.cost || !this.runProfile.spendCoins(action.cost)) return false;
@@ -327,6 +361,57 @@ export class Workshop {
   private nearDoor(position:Vector3): SlidingDoor|undefined {
     return this.slidingDoors.filter(item=>Vector3.DistanceSquared(item.position,position)<=item.config.interactionRange**2)
       .sort((a,b)=>Vector3.DistanceSquared(a.position,position)-Vector3.DistanceSquared(b.position,position))[0];
+  }
+
+  private buildAction(position:Vector3,aim:Ray):'buy'|'take'|undefined {
+    if(this.carry.item || Vector3.Distance(position,this.shopPosition)>3 ||
+      !this.aimedAt(aim,this.shopPosition.add(new Vector3(0,1,0)),1.4))return undefined;
+    return this.kitAvailable?'take':this.waves.canPurchase?'buy':undefined;
+  }
+
+  private targetContext(position:Vector3,player:EnemyTarget) {
+    const roomId=Object.entries(this.level.rooms).find(([,room])=>
+      Math.abs(position.x-room.cell[0]*cellSpacing)<halfRoom-0.2 &&
+      Math.abs(position.z-room.cell[1]*cellSpacing)<halfRoom-0.2)?.[0];
+    const reachable=(to:Vector3)=>{
+      const key=[Math.round(position.x),Math.round(position.z),Math.round(to.x),Math.round(to.z)].join(':');
+      const old=this.accessibility.get(key);
+      if(old?.revision===this.grid.revision)return old.reachable;
+      const path=this.grid.path(position,to,false).points;
+      const result=this.grid.passable(position,to)||!!path.length&&Vector3.DistanceSquared(path[path.length-1],to)<0.25;
+      if(this.accessibility.size>1024)this.accessibility.clear();
+      this.accessibility.set(key,{revision:this.grid.revision,reachable:result});return result;
+    };
+    return {roomId,player,playerAvailable:reachable(player.feet),playerDistance:Vector3.Distance(position,player.feet),
+      turrets:this.turrets.filter(t=>!t.isDestroyed&&reachable(t.position.clone())).map(t=>({
+        target:this.turretTargets.get(t)!,armed:t.ammo>0&&t.config.autoFire,distance:Vector3.DistanceSquared(position,t.position)
+      }))};
+  }
+
+  private updatePlacement(position:Vector3,aim:Ray):void {
+    this.candidate=undefined;
+    if(!this.carry.item || aim.direction.y>=-0.01)return;
+    const distance=-aim.origin.y/aim.direction.y;
+    if(distance<0||distance>buildingConfig.reach)return;
+    const point=aim.origin.add(aim.direction.scale(distance));
+    const roomId=this.nearestRoomId(point.x,point.z),room=this.level.rooms[roomId];
+    const center=new Vector3(room.cell[0]*cellSpacing,0,room.cell[1]*cellSpacing);
+    const cell=this.placement.candidate(point,roomId,center),p=cell.position;
+    const valid=this.placement.isFree(cell.id) && Math.abs(p.x-center.x)<halfRoom-2 &&
+      Math.abs(p.z-center.z)<halfRoom-2 && Vector3.Distance(p,position)>1.3 &&
+      Vector3.Distance(p,this.core.position)>2.5 && Vector3.Distance(p,this.shopPosition)>2 &&
+      this.turrets.every(t=>Vector3.Distance(p,t.position)>2) &&
+      this.cleanupButtons.every(b=>Vector3.Distance(p,b.position)>2) &&
+      this.enemies.every(e=>e.state==='dead'||Vector3.Distance(p,e.debug.position)>1.5) &&
+      this.grid.passable(p,p) && this.grid.passable(position,p);
+    this.candidate={...cell,valid};
+  }
+
+  updateBuilding(dt:number,position:Vector3,aim:Ray):void {
+    this.updatePlacement(position,aim);
+    const camera=this.scene.activeCamera;
+    if(camera)this.buildingView.update(dt,this.shopPosition,position,camera,!!this.carry.item,this.kitAvailable,
+      this.candidate?.position,!!this.candidate?.valid,this.runProfile.coins>=buildingConfig.price,this.waves.canPurchase);
   }
   private nearTurret(position:Vector3): CubeTurret|undefined {
     return this.turrets.filter(item=>Vector3.DistanceSquared(item.position,position)<=2.4**2)
@@ -476,7 +561,8 @@ export class Workshop {
   private spawnZombie(obstacleBreaker: { break(cell: VoxelWorldBounds, direction: Vector3, impact: Impact): boolean }): Enemy {
     const zombie=new VoxelZombie(this.scene,this.zombieSpawnPosition(),this.grid,this.debris,
       obstacleBreaker,()=>this.enemies,this.coreTarget,
-      position=>this.coins.push(new CoinPickup(this.scene,position.add(new Vector3(0,coinConfig.spawnHeight,0)))));
+      position=>this.coins.push(new CoinPickup(this.scene,position.add(new Vector3(0,coinConfig.spawnHeight,0)))),
+      (position,player)=>this.targetContext(position,player));
     this.enemies.push(zombie); this.targets.push(zombie.target); this.enemyTargets.add(zombie.target);
     return zombie;
   }

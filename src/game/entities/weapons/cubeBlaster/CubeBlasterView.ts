@@ -35,6 +35,7 @@ export class CubeBlasterView {
   }
 
   fired(): void { this.kick = 1; }
+  setVisible(visible:boolean):void { this.root.setEnabled(visible); }
 
   update(dt: number, aspect: number): void {
     this.kick = Math.max(0, this.kick - dt * 7);

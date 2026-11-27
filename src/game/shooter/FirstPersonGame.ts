@@ -145,7 +145,9 @@ export class FirstPersonGame {
         this.player.move(this.input.moveX,this.input.moveZ,dt,
           this.workshop.enemyBlockers(this.player.feet));
         this.projectiles.update(dt);
-        if (this.input.firing && this.player.fire(this.time)) { this.view.fired(); this.audio.play('shot'); }
+        this.view.setVisible(!this.workshop.carry.item);
+        this.workshop.updateBuilding(dt,this.player.feet,this.getAimRay());
+        if (!this.workshop.carry.item && this.input.firing && this.player.fire(this.time)) { this.view.fired(); this.audio.play('shot'); }
         const playerHealth=this.player.health;
         this.workshop.updateEnemies(dt,this.player,this.time);
         if (this.player.health<playerHealth) this.audio.play('hurt');

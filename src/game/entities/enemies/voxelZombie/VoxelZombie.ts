@@ -8,7 +8,7 @@ import type { NavigationCell, NavigationGrid } from '../../../navigation/Navigat
 import { VoxelDamageTarget } from '../../../shooter/VoxelDamageTarget';
 import type { Impact } from '../../../shooter/ProjectileSystem';
 import { zombieConfig as cfg } from './config';
-import { ZombieTargetPriority } from './ZombieTargetPriority';
+import { ZombieTargetPriority, type TargetContext } from './ZombieTargetPriority';
 
 export interface ZombieObstacleBreaker {
   break(cell: NavigationCell, direction: Vector3, impact: Impact): boolean;
@@ -45,7 +45,8 @@ export class VoxelZombie extends Enemy {
   constructor(private readonly scene: Scene, spawn: Vector3, grid: NavigationGrid, debris: VoxelDebrisController,
     private readonly obstacleBreaker: ZombieObstacleBreaker,
     private readonly getCrowd: () => readonly Enemy[], core: EnemyTarget,
-    private readonly onDefeated?: (position:Vector3)=>void) {
+    private readonly onDefeated?: (position:Vector3)=>void,
+    private readonly getTargetContext?:(position:Vector3,player:EnemyTarget)=>TargetContext) {
     super();
     this.priority=new ZombieTargetPriority(core);
     const voxels: VoxVoxel[]=[];
@@ -58,7 +59,6 @@ export class VoxelZombie extends Enemy {
       this.ai.applyKnockback(normal.negate(),cfg.hitKnockbackSpeed);
       this.ai.applyHitSlow(cfg.hitSlowSeconds);
       this.takeProjectileDamage(impact.damage);
-      if (!impact.forceDestruction && this.state!=='dead') this.priority.hitBy(impact.source);
     });
     this.ownMeshes=new Set<AbstractMesh>(model.getIntactMeshes());
     for (const m of this.ownMeshes) m.isPickable=m.checkCollisions=true;
@@ -140,8 +140,9 @@ export class VoxelZombie extends Enemy {
       this.updateDeath(dt);
       return;
     }
-    this.priority.update(dt);
-    this.priority.checkPlayerProximity(player,this.ai.position);
+    this.priority.update(this.getTargetContext?.(this.ai.position,player) ?? {
+      roomId:'default',player,playerAvailable:true,turrets:[],playerDistance:Vector3.Distance(this.ai.position,player.feet)
+    });
     const target=this.priority.target;
     this.ai.update(dt,target,player,()=>this.canSee(this.scene,this.ownMeshes,player));
     if (this.ai.playerBlocked && target!==player) this.priority.blockedBy(player);

@@ -38,6 +38,11 @@ export class WorldLabelsOverlay {
   }
 
   update(playerPosition:Vector3,aim:Ray):void {
+    while(this.ammoLabels.length<this.workshop.placedTurrets.length) {
+      this.ammoLabels.push(this.createLabel('turret-ammo'));
+      this.turretPanels.push(new WorldInteractionPanel(this.scene));
+      this.turretNotices.push(new WorldInteractionPanel(this.scene));
+    }
     const camera=this.scene.activeCamera;
     const canvas=this.scene.getEngine().getRenderingCanvas();
     if (!camera || !canvas) return;
