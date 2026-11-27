@@ -39,9 +39,9 @@ export class SettingsScreen {
       {min:0,max:100,step:1},v=>audio.setVolume(v/100),()=>audio.play('coin')));
     this.lookRows={
       desktop:percentSlider('look-desktop',texts.mouseSensitivity,sensitivity.percent('desktop'),
-        inputConfig.lookSensitivity,v=>sensitivity.setPercent('desktop',v)),
+        inputConfig.lookSensitivity.ranges.desktop,v=>sensitivity.setPercent('desktop',v)),
       mobile:percentSlider('look-mobile',texts.touchSensitivity,sensitivity.percent('mobile'),
-        inputConfig.lookSensitivity,v=>sensitivity.setPercent('mobile',v))
+        inputConfig.lookSensitivity.ranges.mobile,v=>sensitivity.setPercent('mobile',v))
     };
     panel.append(this.lookRows.desktop,this.lookRows.mobile);
     this.resume.type='button'; this.resume.textContent=texts.continue;

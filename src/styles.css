@@ -292,7 +292,8 @@ body {
 .mobile-control[hidden] { display:none; }
 .mobile-control:active { transform:scale(.94); background:#278784e8; }
 .mobile-control--fire {
-  right:max(18px,env(safe-area-inset-right)); bottom:max(22px,env(safe-area-inset-bottom));
+  right:max(42px,calc(env(safe-area-inset-right) + 24px));
+  bottom:max(46px,calc(env(safe-area-inset-bottom) + 24px));
   width:72px; height:72px; border-radius:50%; color:#ffcb46; font-size:34px;
   transform:translate(var(--mobile-fire-x,0),var(--mobile-fire-y,0));
   transition:transform 140ms ease-out,background-color 100ms ease-out;
@@ -302,7 +303,7 @@ body {
   transform:translate(var(--mobile-fire-x,0),var(--mobile-fire-y,0)) scale(.94);
 }
 .mobile-control--interact,.mobile-control--purchase {
-  right:max(104px,calc(env(safe-area-inset-right) + 92px));
+  right:max(132px,calc(env(safe-area-inset-right) + 114px));
   max-width:190px; padding:8px 12px; font-size:12px; line-height:1.15;
 }
 .mobile-control--interact { bottom:max(76px,calc(env(safe-area-inset-bottom) + 62px)); }
