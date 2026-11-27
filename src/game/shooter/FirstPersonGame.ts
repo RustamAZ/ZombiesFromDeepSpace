@@ -17,6 +17,7 @@ import { SettingsScreen } from '../ui/SettingsScreen';
 import type { GameAudio } from '../audio/GameAudio';
 import { texts } from '../ui/texts';
 import { InputController } from '../input/InputController';
+import { renderingConfig } from './renderingConfig';
 
 export class FirstPersonGame {
   private readonly events = new AbortController();
@@ -28,6 +29,7 @@ export class FirstPersonGame {
     profile:PlayerProfile,onResult:(completed:boolean)=>void,onMenu:()=>void): Promise<FirstPersonGame> {
     const physics = await HavokPhysics();
     const engine = new Engine(canvas, true, { stencil: true });
+    engine.setHardwareScalingLevel(1/Math.min(window.devicePixelRatio||1,renderingConfig.maxDevicePixelRatio));
     const scene = new Scene(engine);
     scene.clearColor = new Color4(0.28, 0.54, 0.55, 1);
     scene.enablePhysics(new Vector3(0, -12, 0), new HavokPlugin(true, physics));
@@ -84,8 +86,14 @@ export class FirstPersonGame {
       if (document.pointerLockElement === canvas) document.exitPointerLock();
       this.syncInput();
     }, opts);
-    window.addEventListener('resize', () => engine.resize(), opts);
+    window.addEventListener('resize', () => this.resizeRenderer(), opts);
     this.view.update(0, engine.getAspectRatio(this.player.camera));
+  }
+
+  private resizeRenderer():void {
+    const pixelRatio=Math.min(window.devicePixelRatio||1,renderingConfig.maxDevicePixelRatio);
+    this.engine.setHardwareScalingLevel(1/pixelRatio);
+    this.engine.resize();
   }
 
   private get playing(): boolean {

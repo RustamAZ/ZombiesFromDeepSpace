@@ -60,3 +60,4 @@ entities/weapons/
 - Interaction and purchase buttons read `Workshop.getInteractions` every frame and execute `tryInteract` / `tryPurchase`; Workshop remains the authority for range, target, cost and wave restrictions.
 - FullscreenController requests the document root on the first mobile `pointerdown`, supports the WebKit-prefixed fallback, and can be retried by start/resume actions. On desktop request pointer lock before fullscreen because fullscreen consumes transient browser activation. Suppress the context menu only inside `#game-frame`.
 - Keep the game viewport fixed on mobile: disable page scaling in the viewport meta tag, use `touch-action: none`, and cancel Safari gesture events within `#game-frame` without interfering with the game's pointer tracking.
+- Render the Babylon canvas at the device pixel ratio capped by `shooter/renderingConfig.ts`; recalculate it on resize/orientation changes so Retina screens stay sharp without unbounded GPU cost.
