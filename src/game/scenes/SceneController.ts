@@ -5,6 +5,7 @@ import { LocalProfileRepository } from '../profile/ProfileRepository';
 import { levelTexts } from '../ui/levelTexts';
 import { texts } from '../ui/texts';
 import { GameAudio } from '../audio/GameAudio';
+import { FullscreenController } from '../platform/FullscreenController';
 
 export class SceneController {
   private readonly menu = document.querySelector<HTMLElement>('#main-menu')!;
@@ -15,6 +16,7 @@ export class SceneController {
   private readonly menuStatus = document.querySelector<HTMLElement>('#menu-status')!;
   private readonly status = document.querySelector<HTMLElement>('#status')!;
   private readonly events = new AbortController();
+  private readonly fullscreen = new FullscreenController(this.events.signal);
   private readonly audio = new GameAudio();
   private state: 'menu' | 'loading' | 'workshop' = 'menu';
   private game?: LevelSession;
@@ -47,12 +49,15 @@ export class SceneController {
     document.addEventListener('fullscreenchange',()=>{
       requestAnimationFrame(()=>window.dispatchEvent(new Event('resize')));
     },{signal:this.events.signal});
+    window.visualViewport?.addEventListener('resize',()=>{
+      requestAnimationFrame(()=>window.dispatchEvent(new Event('resize')));
+    },{signal:this.events.signal});
     this.bindButton(document.querySelector<HTMLButtonElement>('#play-button')!, async touch => {
       if (this.state !== 'workshop') return;
       try {
         this.audio.unlock();
         const play=this.game?.play(touch);
-        this.requestFullscreen();
+        this.fullscreen.request();
         await play;
         this.status.textContent = '';
       } catch {
@@ -94,7 +99,7 @@ export class SceneController {
     try {
       const lock = !touch && this.canvas.requestPointerLock
         ? Promise.resolve(this.canvas.requestPointerLock()).catch(() => {}) : Promise.resolve();
-      this.requestFullscreen();
+      this.fullscreen.request();
       if (this.events.signal.aborted) return;
       const game = await LevelSession.create(this.canvas,this.audio,levels[id],this.profile,completed=>{
         this.backToMenu();
@@ -118,11 +123,6 @@ export class SceneController {
       this.showMenu();
       this.menuStatus.textContent = texts.loadError;
     }
-  }
-
-  private requestFullscreen():void {
-    if (document.fullscreenElement || !this.frame.requestFullscreen) return;
-    void this.frame.requestFullscreen({ navigationUI:'hide' }).catch(()=>{});
   }
 
   private backToMenu():void {
