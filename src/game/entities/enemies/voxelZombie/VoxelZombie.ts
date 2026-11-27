@@ -35,13 +35,14 @@ export class VoxelZombie extends Enemy {
   private wallAttackDirection=Vector3.Forward();
   private wallAttackLean=0;
   private attackCell?: NavigationCell;
+  private readonly ownMeshes: ReadonlySet<AbstractMesh>;
   get state() { return this.ai.state; }
   get deathComplete(): boolean { return this.deathCollapsed; }
   get debug() { return this.ai.debug; }
   get aimPoint(): Vector3 { return this.ai.position.add(new Vector3(0,cfg.height*cfg.cell*0.5,0)); }
   ownsMesh(mesh: AbstractMesh): boolean { return this.target.model.getIntactMeshes().includes(mesh as Mesh); }
 
-  constructor(scene: Scene, spawn: Vector3, grid: NavigationGrid, debris: VoxelDebrisController,
+  constructor(private readonly scene: Scene, spawn: Vector3, grid: NavigationGrid, debris: VoxelDebrisController,
     private readonly obstacleBreaker: ZombieObstacleBreaker,
     private readonly getCrowd: () => readonly Enemy[], core: EnemyTarget,
     private readonly onDefeated?: (position:Vector3)=>void) {
@@ -59,8 +60,8 @@ export class VoxelZombie extends Enemy {
       this.takeProjectileDamage(impact.damage);
       if (!impact.forceDestruction && this.state!=='dead') this.priority.hitBy(impact.source);
     });
-    const own=new Set<AbstractMesh>(model.getIntactMeshes());
-    for (const m of own) m.isPickable=m.checkCollisions=true;
+    this.ownMeshes=new Set<AbstractMesh>(model.getIntactMeshes());
+    for (const m of this.ownMeshes) m.isPickable=m.checkCollisions=true;
     this.face=new TransformNode('zombie-face',scene);
     this.visionRoot=new TransformNode('zombie-vision',scene);
     this.eyePaint=new StandardMaterial('zombie-eyes',scene);
@@ -142,7 +143,7 @@ export class VoxelZombie extends Enemy {
     this.priority.update(dt);
     this.priority.checkPlayerProximity(player,this.ai.position);
     const target=this.priority.target;
-    this.ai.update(dt,target,player);
+    this.ai.update(dt,target,player,()=>this.canSee(this.scene,this.ownMeshes,player));
     if (this.ai.playerBlocked && target!==player) this.priority.blockedBy(player);
     this.updateWallAttack(dt);
     let targetYaw=0;

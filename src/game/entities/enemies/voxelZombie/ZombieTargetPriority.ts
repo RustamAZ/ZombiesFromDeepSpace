@@ -34,6 +34,8 @@ export class ZombieTargetPriority {
       this.retaliateAgainst=player;
       this.remainingSeconds=zombieConfig.retaliationSeconds;
     }
+    if (inside && this.retaliateAgainst===player)
+      this.remainingSeconds=Math.max(this.remainingSeconds,zombieConfig.retaliationSeconds);
     this.playerWasInsideProximity=inside;
   }
 

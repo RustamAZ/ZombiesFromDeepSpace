@@ -61,7 +61,8 @@ export class EnemyController {
     this.knockbackVelocity.addInPlace(horizontal.normalize().scaleInPlace(speed));
   }
 
-  update(dt: number, target: EnemyTarget, player:EnemyTarget): void {
+  update(dt: number, target: EnemyTarget, player:EnemyTarget,
+    canAttackPlayer:()=>boolean=()=>this.grid.passable(this.position,player.feet)): void {
     if (this.state==='dead') return;
     const movementFactor=this.hitSlowFor>0 ? this.cfg.hitSlowFactor ?? 1 : 1;
     this.hitSlowFor=Math.max(0,this.hitSlowFor-dt);
@@ -71,11 +72,11 @@ export class EnemyController {
     this.playerBlocked=this.applyPlayerSpace(player);
     const inReach=(candidate: EnemyTarget) => candidate.isAlive &&
       Vector3.Distance(this.position,candidate.feet)<=this.cfg.attackRange &&
-      this.grid.passable(this.position,candidate.feet);
+      (candidate===player ? canAttackPlayer() : this.grid.passable(this.position,candidate.feet));
     if (this.state==='windup') {
       this.timer-=dt;
       if (this.timer<=0) {
-        if (this.attackTarget && this.attackTarget===target && inReach(target)) target.takeDamage(this.cfg.damage);
+        if (this.attackTarget && inReach(this.attackTarget)) this.attackTarget.takeDamage(this.cfg.damage);
         this.state='recovery'; this.timer=this.cfg.recovery;
       }
       return;
