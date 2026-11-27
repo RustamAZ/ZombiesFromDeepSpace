@@ -23,6 +23,15 @@ body {
   overscroll-behavior: none;
 }
 
+/* Leave the page viewport to the mobile browser; the game owns gestures inside #app. */
+@media (pointer: coarse) {
+  html, body {
+    overflow: visible;
+    touch-action: auto;
+    overscroll-behavior: auto;
+  }
+}
+
 #app {
   width: 100%;
   height: 100dvh;
