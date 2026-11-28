@@ -8,7 +8,7 @@ export const inputConfig={
     defaultPercent:{desktop:100,mobile:100},
     ranges:{
       desktop:{min:20,max:100,step:5},
-      mobile:{min:20,max:150,step:5}
+      mobile:{min:20,max:210,step:5}
     }
   }
 } as const;
