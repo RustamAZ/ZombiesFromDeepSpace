@@ -24,6 +24,8 @@ export class SceneController {
   private readonly profile=this.repository.load();
   private readonly tutorialButton=document.querySelector<HTMLButtonElement>('#start-tutorial')!;
   private readonly firstLevelButton=document.querySelector<HTMLButtonElement>('#start-first-level')!;
+  private readonly secondLevelButton=document.querySelector<HTMLButtonElement>('#start-second-level')!;
+  private readonly thirdLevelButton=document.querySelector<HTMLButtonElement>('#start-third-level')!;
 
   constructor() {
     document.title=texts.documentTitle;
@@ -37,6 +39,8 @@ export class SceneController {
     this.bindButton(this.startButton, touch => this.start(touch));
     this.bindButton(this.tutorialButton,touch=>this.start(touch,'tutorial'));
     this.bindButton(this.firstLevelButton,touch=>this.start(touch,'firstLevel'));
+    this.bindButton(this.secondLevelButton,touch=>this.start(touch,'secondLevel'));
+    this.bindButton(this.thirdLevelButton,touch=>this.start(touch,'thirdLevel'));
     window.addEventListener('pagehide',()=>this.repository.save(this.profile),{signal:this.events.signal});
     this.frame.addEventListener('contextmenu',event=>event.preventDefault(),{signal:this.events.signal});
     const preventGesture=(event:Event)=>event.preventDefault();
@@ -81,19 +85,21 @@ export class SceneController {
     this.startButton.textContent = texts.start;
     this.tutorialButton.textContent=levelTexts.tutorial;
     this.firstLevelButton.textContent=this.profile.tutorialCompleted?levelTexts.firstLevel:levelTexts.locked;
+    this.secondLevelButton.textContent=levelTexts.secondLevel;
+    this.thirdLevelButton.textContent=levelTexts.thirdLevel;
     this.tutorialButton.disabled=false;
-    this.firstLevelButton.disabled=!this.profile.tutorialCompleted;
+    this.firstLevelButton.disabled=this.secondLevelButton.disabled=this.thirdLevelButton.disabled=!this.profile.tutorialCompleted;
     this.menuStatus.textContent = this.status.textContent = '';
   }
 
   private async start(touch: boolean, requested?:LevelId): Promise<void> {
     if (this.state !== 'menu') return;
     const id=requested ?? (this.profile.tutorialCompleted?'firstLevel':'tutorial');
-    if (id==='firstLevel' && !this.profile.tutorialCompleted) return;
+    if (id!=='tutorial' && !this.profile.tutorialCompleted) return;
     this.audio.unlock();
     this.state = 'loading';
     this.startButton.disabled = true;
-    this.tutorialButton.disabled=this.firstLevelButton.disabled=true;
+    this.tutorialButton.disabled=this.firstLevelButton.disabled=this.secondLevelButton.disabled=this.thirdLevelButton.disabled=true;
     this.startButton.textContent = texts.loading;
     this.workshop.hidden = false;
     try {
@@ -107,7 +113,7 @@ export class SceneController {
       },()=>this.backToMenu());
       if (this.events.signal.aborted) { game.dispose(); return; }
       this.game = game;
-      document.querySelector<HTMLElement>('#hud-room')!.textContent=id==='tutorial'?levelTexts.tutorial:levelTexts.firstLevel;
+      document.querySelector<HTMLElement>('#hud-room')!.textContent=levelTexts[id];
       await lock;
       if (this.events.signal.aborted) return;
       this.menu.hidden = true;

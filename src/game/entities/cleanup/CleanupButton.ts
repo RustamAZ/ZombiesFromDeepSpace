@@ -1,10 +1,11 @@
 import { Vector3 } from '@babylonjs/core';
+import type { DebrisArea } from '../voxel/VoxelDebrisController';
 import { CleanupButtonVisual } from './CleanupButtonVisual';
 import { cleanupButtonConfig } from './config';
 
 export class CleanupButton {
   constructor(readonly roomId:string, readonly visual:CleanupButtonVisual,
-    readonly bounds:{min:Vector3;max:Vector3}, readonly config=cleanupButtonConfig) {}
+    readonly bounds:DebrisArea, readonly config=cleanupButtonConfig) {}
 
   get position(): Vector3 { return this.visual.root.position; }
 

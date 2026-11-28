@@ -18,7 +18,9 @@ export class InputController {
     this.desktop.reset(); this.mobile.reset(); this.modeValue=mode; this.applyEnabled();
   }
   setPlaying(playing:boolean):void { this.playing=playing; this.applyEnabled(); }
-  setMobileActions(interact?:string,purchase?:string):void { this.mobile.setActions(interact,purchase); }
+  setMobileActions(interact?:string,purchase?:string,alternate?:string,interactDisabled=false):void {
+    this.mobile.setActions(interact,purchase,alternate,interactDisabled);
+  }
   consumeLook():LookDelta {
     const delta=this.active.consumeLook();
     const scale=this.sensitivity.scale(this.modeValue);

@@ -10,6 +10,8 @@ export const shooterDebrisConfig = {
   fallbackAngularDamping: 5,
   fallbackSettleSpeed: 0.04,
   looseHitKickSpeed: 4.8,
+  blastChipSpeed: 1.5,
+  blastChipLift: 1.2,
   detachedSplitSpeed: 0.85,
   detachedLiftSpeed: 0.18,
   detachedSpinSpeed: 0.9,

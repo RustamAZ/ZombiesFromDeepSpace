@@ -1,5 +1,8 @@
 import { Vector3 } from '@babylonjs/core';
 import { NavigationAgent } from '../../navigation/NavigationAgent';
+import { LocalCrowdFlow } from '../../navigation/LocalCrowdFlow';
+import type { PathBuildQueue } from '../../navigation/PathBuildQueue';
+import type { CrowdIndex } from '../../navigation/CrowdIndex';
 import type { NavigationCell, NavigationGrid } from '../../navigation/NavigationGrid';
 import type { EnemyConfig, EnemyState, EnemyTarget } from './Enemy';
 
@@ -16,18 +19,20 @@ export class EnemyController {
   playerBlocked=false;
   private attackTarget?: EnemyTarget;
   private stalledFor=0;
+  private readonly stallProbeInterval=0.30+Math.random()*0.12;
   private stallAnchor?: Vector3;
   private stuckDoor?: ReturnType<NavigationGrid['breakableAt']>;
   private assault?: {position:Vector3;cell:NavigationCell;goal:Vector3;revision:number};
   private assaultRetryIn=0;
-  private bypass?: { blocker:Vector3; forward:Vector3; side:Vector3; goal:Vector3; revision:number; agent:NavigationAgent };
+  private readonly flow:LocalCrowdFlow;
 
   constructor(home: Vector3, private readonly grid: NavigationGrid, private readonly cfg: EnemyConfig,
-    private readonly crowdPositions: () => readonly Vector3[] = () => [],
-    private readonly crowdReservations: () => readonly Vector3[] = () => []) {
+    private readonly crowd:CrowdIndex,
+    private readonly pathfinding=true, builds?:PathBuildQueue) {
     this.position=home.clone();
-    this.agent=new NavigationAgent(grid);
-    this.assaultAgent=new NavigationAgent(grid);
+    this.agent=new NavigationAgent(grid,builds);
+    this.assaultAgent=new NavigationAgent(grid,builds);
+    this.flow=new LocalCrowdFlow(grid,crowd,cfg.personalSpaceRadius*2-0.02);
   }
 
   get assaultPosition(): Vector3|undefined { return this.assault?.position; }
@@ -86,12 +91,11 @@ export class EnemyController {
       if (this.timer>0) return;
       this.state='chase';
     }
-    if (!target.isAlive) { this.bypass=undefined; this.assault=undefined; return; }
+    if (!target.isAlive) { this.assault=undefined; return; }
     if (this.assault && (this.assault.revision!==this.grid.revision ||
         Vector3.DistanceSquared(this.assault.goal,target.feet)>1)) {
       this.assault=undefined;
       this.assaultAgent.invalidate();
-      this.bypass=undefined;
     }
     this.stuckDoor=this.grid.breakableAt(this.position);
     if (this.stuckDoor) {
@@ -99,7 +103,6 @@ export class EnemyController {
       return;
     }
     if (inReach(target)) {
-      this.bypass=undefined;
       this.assault=undefined;
       this.state='windup'; this.timer=this.cfg.windup; this.attackTarget=target;
       this.yaw=Math.atan2(target.feet.x-this.position.x,target.feet.z-this.position.z);
@@ -107,21 +110,29 @@ export class EnemyController {
     }
     const before=this.position.clone();
     const travel=this.cfg.chaseSpeed*movementFactor*dt;
-    let activeAgent=this.assault ? this.assaultAgent : this.agent;
-    let movementGoal=this.assault?.position ?? target.feet;
-    let movement: ReturnType<NavigationAgent['move']>='waiting';
-    if (!this.followBypass(travel,movementGoal,activeAgent)) {
-      movement=activeAgent.move(this.position,movementGoal,this.cfg.chaseSpeed*movementFactor,dt,!this.assault,
-        (from,to)=>this.canStepPastCrowd(from,to));
-      if ((movement==='waiting' || movement==='blocked') && !this.assault &&
-          this.assaultRetryIn===0 && this.startAssault(target.feet)) {
-        activeAgent=this.assaultAgent;
-        movementGoal=this.assault!.position;
-        movement=activeAgent.move(this.position,movementGoal,this.cfg.chaseSpeed*movementFactor,dt,false,
-          (from,to)=>this.canStepPastCrowd(from,to));
+    if (!this.pathfinding) {
+      const delta=target.feet.subtract(this.position);
+      delta.y=0;
+      const distance=delta.length();
+      if (distance>0.001) {
+        this.yaw=Math.atan2(delta.x,delta.z);
+        const next=this.position.add(delta.scale(Math.min(1,travel/distance)));
+        if (!this.grid.passable(this.position,next)) {
+          this.stuckDoor=this.grid.breakableAhead(this.position,next,1.05);
+        } else if (this.flow.canStep(this.position,next)) {
+          this.position.copyFrom(next);
+          this.playerBlocked=this.applyPlayerSpace(player) || this.playerBlocked;
+        }
       }
-      if (movement==='waiting' && this.startBypass(movementGoal,activeAgent))
-        this.followBypass(travel,movementGoal,activeAgent);
+      return;
+    }
+    this.flow.tick(dt);
+    const speed=this.cfg.chaseSpeed*movementFactor;
+    const activeAgent=this.assault ? this.assaultAgent : this.agent;
+    let movement=activeAgent.move(this.position,this.assault?.position ?? target.feet,speed,dt,!this.assault,this.flow.steer);
+    if ((movement==='blocked' || (movement==='waiting' && this.agent.plannedBreakTarget)) &&
+        !this.assault && this.assaultRetryIn===0 && this.startAssault(target.feet)) {
+      movement=this.assaultAgent.move(this.position,this.assault!.position,speed,dt,false,this.flow.steer);
     }
     if (this.assault && Vector3.DistanceSquared(this.position,this.assault.position)<0.25) {
       const center=this.assault.cell.min.add(this.assault.cell.max).scaleInPlace(0.5);
@@ -133,8 +144,13 @@ export class EnemyController {
       this.stallAnchor=this.position.clone();
       this.stalledFor=0;
     } else this.stalledFor+=dt;
-    if (this.stalledFor>=0.3) {
-      this.stuckDoor=this.grid.breakableWithinReach(this.position,target.feet,1.55);
+    if (this.stalledFor>=this.stallProbeInterval && !this.stuckDoor && movement!=='moving') {
+      this.stalledFor=0;
+      const toward=activeAgent.waypoints[0] ?? target.feet;
+      this.stuckDoor=this.grid.breakableAhead(this.position,toward,this.cfg.wallBreakReach);
+      if (!this.stuckDoor && (this.assault || this.agent.plannedBreakTarget)) {
+        this.stuckDoor=this.grid.breakableWithinReach(this.position,toward,this.cfg.wallBreakReach);
+      }
     }
     if (delta.x*delta.x+delta.z*delta.z>1e-8) this.yaw=Math.atan2(delta.x,delta.z);
   }
@@ -149,119 +165,36 @@ export class EnemyController {
   private startAssault(goal:Vector3): boolean {
     this.assaultRetryIn=0.25;
     const spots=this.grid.doorAssaultSpots(this.position,goal,this.agent.plannedBreakTarget);
-    const crowd=this.crowdPositions();
-    const reservations=this.crowdReservations();
-    const spacing=(this.cfg.personalSpaceRadius*2+0.05)**2;
-    const available=spots.filter(({position})=>
-      this.grid.passable(this.position,position) &&
-      crowd.every(other=>Vector3.DistanceSquared(position,other)>=spacing) &&
-      reservations.every(other=>Vector3.DistanceSquared(position,other)>=spacing));
-    available.sort((a,b)=>Vector3.DistanceSquared(this.position,a.position)-
-      Vector3.DistanceSquared(this.position,b.position));
-    const spot=available[0];
+    const spacing=this.cfg.personalSpaceRadius*2+0.05;
+    let spot:(typeof spots)[number]|undefined, best=Infinity;
+    for(const candidate of spots) {
+      const p=candidate.position,d=Vector3.DistanceSquared(this.position,p);
+      if(d>=best || !this.grid.passable(this.position,p))continue;
+      const occupied=(other:Vector3)=>Vector3.DistanceSquared(p,other)<spacing*spacing;
+      if(this.crowd.some(this.position,p,p,spacing,occupied) ||
+         this.crowd.some(this.position,p,p,spacing,occupied,true))continue;
+      best=d;spot=candidate;
+    }
     if (!spot) return false;
     this.assault={...spot,goal:goal.clone(),revision:this.grid.revision};
     this.assaultAgent.invalidate();
-    this.bypass=undefined;
     return true;
   }
 
-  private startBypass(goal:Vector3,agent:NavigationAgent): boolean {
-    const waypoint=agent.waypoints[0];
-    if (!waypoint) return false;
-    const forward=waypoint.subtract(this.position); forward.y=0;
-    if (forward.lengthSquared()<0.01) return false;
-    forward.normalize();
-    const side=new Vector3(forward.z,0,-forward.x);
-    const spacing=this.cfg.personalSpaceRadius*2;
-    const blocker=this.crowdPositions()
-      .filter(other=>{
-        const offset=other.subtract(this.position); offset.y=0;
-        return Vector3.Dot(offset,forward)>-0.15 && offset.lengthSquared()<(spacing+0.35)**2;
-      })
-      .sort((a,b)=>Vector3.DistanceSquared(a,this.position)-Vector3.DistanceSquared(b,this.position))[0];
-    if (!blocker) return false;
-    const lateral=Vector3.Dot(this.position.subtract(blocker),side);
-    const preferred=Math.abs(lateral)>0.05 ? Math.sign(lateral) :
-      Vector3.Dot(this.separationDirection,side)>=0?1:-1;
-    for (const sign of [preferred,-preferred]) {
-      const direction=side.scale(sign);
-      const probe=this.position.add(direction.scale(spacing+0.02));
-      if (!this.grid.passable(this.position,probe) || !this.canStepPastCrowd(this.position,probe)) continue;
-      this.bypass={blocker,forward,side:direction,goal:goal.clone(),revision:this.grid.revision,agent};
-      return true;
-    }
-    return false;
-  }
-
-  private followBypass(travel:number,goal:Vector3,agent:NavigationAgent): boolean {
-    const bypass=this.bypass;
-    if (!bypass) return false;
-    const waypoint=agent.waypoints[0];
-    if (!waypoint || bypass.agent!==agent || bypass.revision!==this.grid.revision ||
-        !this.crowdPositions().includes(bypass.blocker) ||
-        Vector3.DistanceSquared(bypass.goal,goal)>1) {
-      this.bypass=undefined;
-      agent.invalidate();
-      return false;
-    }
-    const relative=this.position.subtract(bypass.blocker); relative.y=0;
-    const spacing=this.cfg.personalSpaceRadius*2;
-    if (Vector3.Dot(relative,bypass.forward)>spacing*0.6 ||
-        this.clearCrowdSegment(this.position,waypoint)) {
-      this.bypass=undefined;
-      agent.invalidate();
-      return false;
-    }
-    const moveSide=Vector3.Dot(relative,bypass.side)<spacing+0.02;
-    const direction=moveSide?bypass.side:bypass.forward;
-    const next=this.position.add(direction.scale(travel));
-    if (this.grid.passable(this.position,next) && this.canStepPastCrowd(this.position,next)) {
-      this.position.copyFrom(next);
-    } else if (!moveSide && !this.grid.passable(this.position,next)) {
-      this.stuckDoor=this.grid.breakableAhead(this.position,next,1.05);
-    }
-    return true;
-  }
-
-  private clearCrowdSegment(from:Vector3,to:Vector3): boolean {
-    if (!this.grid.passable(from,to)) return false;
-    const dx=to.x-from.x, dz=to.z-from.z;
-    const lengthSquared=dx*dx+dz*dz;
-    if (lengthSquared<0.0001) return true;
-    const spacing=(this.cfg.personalSpaceRadius*2+0.02)**2;
-    return this.crowdPositions().every(other=>{
-      const projection=Math.max(0,Math.min(1,
-        ((other.x-from.x)*dx+(other.z-from.z)*dz)/lengthSquared));
-      const x=from.x+dx*projection-other.x, z=from.z+dz*projection-other.z;
-      return x*x+z*z>=spacing;
-    });
-  }
-
-  private canStepPastCrowd(from:Vector3,to:Vector3): boolean {
-    const minimumDistance=this.cfg.personalSpaceRadius*2-0.02;
-    const minimumSquared=minimumDistance*minimumDistance;
-    for (const other of this.crowdPositions()) {
-      const dx=to.x-other.x, dz=to.z-other.z;
-      const nextDistance=dx*dx+dz*dz;
-      if (nextDistance>=minimumSquared) continue;
-      const fromDx=from.x-other.x, fromDz=from.z-other.z;
-      if (nextDistance<fromDx*fromDx+fromDz*fromDz) return false;
-    }
-    return true;
-  }
 
   private applyPersonalSpace(dt:number): void {
     const minimumDistance=this.cfg.personalSpaceRadius*2;
     const push=Vector3.Zero();
-    for (const other of this.crowdPositions()) {
-      const delta=this.position.subtract(other); delta.y=0;
-      const distance=delta.length();
-      if (distance>=minimumDistance) continue;
-      if (distance<0.0001) delta.copyFrom(this.separationDirection);
-      else delta.scaleInPlace(1/distance);
-      push.addInPlace(delta.scale((minimumDistance-distance)*0.5));
-    }
+    const p=this.position;
+    this.crowd.some(p,p,p,minimumDistance,other=>{
+      const x=p.x-other.x,z=p.z-other.z,squared=x*x+z*z;
+      if(squared<minimumDistance*minimumDistance) {
+        const distance=Math.sqrt(squared),weight=(minimumDistance-distance)*0.5;
+        push.x+=(distance<0.0001 ? this.separationDirection.x : x/distance)*weight;
+        push.z+=(distance<0.0001 ? this.separationDirection.z : z/distance)*weight;
+      }
+      return false;
+    });
     if (push.lengthSquared()<0.000001) return;
     const maxPush=this.cfg.chaseSpeed*dt;
     if (push.lengthSquared()>maxPush*maxPush) push.normalize().scaleInPlace(maxPush);

@@ -1,4 +1,38 @@
+import type { NavigationFrameReport } from '../navigation/NavigationFrameStats';
+
 export const texts={
+  livingEnemies:(count:number)=>`Живых на карте: ${count}`,
+  navigationFrame:({worst,p95Ms}:NavigationFrameReport)=>{
+    const {frameMs,pathCalls,pathMs,crowdMs,crowdCandidates,physicsMs,sections:s,enemy,shots,gapMs,alive}=worst;
+    const ms=(n:number)=>Math.max(0,n).toFixed(1);
+    return [
+      `За 5 с: пик ${ms(frameMs)} · p95 ${ms(p95Ms)} мс`,
+      `В пиковом кадре: ${alive} живых`,
+      `Поиск пути: ${pathCalls} выз. · ${ms(pathMs)} мс`,
+      `Соседи: ${ms(crowdMs)} мс · проверок: ${crowdCandidates}`,
+      `Цель: ${ms(enemy.target)} · Движение/бой: ${ms(enemy.movement)}`,
+      `Удар по двери: ${ms(enemy.wall)} · Поза: ${ms(enemy.pose)}`,
+      `Видимость: ${ms(enemy.visibility)} мс · Позы: ${enemy.animated} вкл / ${enemy.culled} выкл`,
+      `Смерть: ${ms(enemy.death)} · Волна: ${ms(s.wave)}`,
+      `Спавн: ${worst.waveWork.spawned} / ${ms(worst.waveWork.spawnMs)} мс · Удалено: ${worst.waveWork.removed} / ${ms(worst.waveWork.removeMs)} мс`,
+      `Игрок: ${ms(s.player)} · Снаряды: ${ms(s.projectiles)}`,
+      `В полёте: ${shots.active} · Лучей: ${shots.checks} · Попаданий: ${shots.hits}`,
+      `Лучи: ${ms(shots.collisionMs)} · Урон: ${ms(shots.impactMs)} · Эффекты: ${ms(shots.effectsMs)} мс`,
+      `Из урона: выбор целей взрыва ${ms(shots.blastQueryMs)} мс · Целей: ${shots.blastTargets}`,
+      `Обломки и монеты: ${ms(s.debrisAndCoins)}`,
+      `Турели: ${ms(s.turrets)} · Лучей турелей: ${worst.turretSightRays} · Двери: ${ms(s.doors)}`,
+      `Оборона прочее: ${ms(s.defenseOther)} · Интерфейс: ${ms(s.ui)}`,
+      `Физика: ${ms(physicsMs)} · Сцена CPU: ${ms(s.scene-physicsMs)}`,
+      `Из сцены: отбор мешей ${ms(worst.meshEvaluationMs)} мс`,
+      `Активных мешей: ${worst.activeMeshes} · Draw calls: ${worst.drawCalls}`,
+      ...(worst.meshCounts ? [
+        `Зомби: ${worst.meshCounts.zombies} · Обломки: ${worst.meshCounts.debris}`,
+        `Кубиков в батче: ${worst.meshCounts.batchedCubes}`,
+        `Окружение: ${worst.meshCounts.environment} · Прочее: ${worst.meshCounts.other}`
+      ] : []),
+      `Между кадрами: ${ms(gapMs)}`
+    ].join('\n');
+  },
   documentTitle:'Кубоцех · Полигон',
   gameTitle:'Кубоцех',
   roomTitle:'Испытательный зал',
@@ -31,6 +65,9 @@ export const texts={
   objective:'Отбивай волны зомби. Не дай им уничтожить ядро. Между волнами ремонтируй двери и пополняй патроны турелей.',
   interactE:{cleanup:'Убрать мусор',open:'Открыть',close:'Закрыть',buy:'Купить комплект',take:'Взять'},
   interactQ:{door:'Починить дверь',ammo:'Пополнить патроны',turret:'Купить турель',install:'Установить'},
+  interactR:{drop:'Положить комплект',upgrade:'Улучшить'},
+  shopBlock:{full:'Установлено макс. турелей',noSpace:'Нет места для установки',kitPending:'Сначала установи комплект'},
+  turretLevel:(level:number)=>`Ур. ${level}`,
   worldPrompts:{repair:'Ремонт',ammo:'Патроны',rebuild:'Купить турель',cleanup:'Убери'},
   defeat:'Оборона разрушена',
   restart:'Начать заново'

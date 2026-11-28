@@ -2,7 +2,7 @@ import { Color3, DynamicTexture, Material, MeshBuilder, Scene, StandardMaterial,
 import type { SlidingDoor } from '../entities/doors/SlidingDoor';
 import { texts } from './texts';
 
-export type InteractionAction={key:'E'|'Q';label:string;cost?:number;affordable?:boolean};
+export type InteractionAction={key:'E'|'Q'|'R';label:string;cost?:number;affordable?:boolean};
 
 export class WorldInteractionPanel {
   private readonly root:TransformNode;
@@ -55,13 +55,13 @@ export class WorldInteractionPanel {
 
   showDoor(door:SlidingDoor,playerPosition:Vector3,actions:readonly InteractionAction[]):void {
     if (!actions.length) { this.root.setEnabled(false); return; }
-    const normal=door.alongX ? new Vector3(1,0,0) : new Vector3(0,0,1);
+    const normal=new Vector3(Math.sin(door.yaw),0,Math.cos(door.yaw));
     const signedDistance=Vector3.Dot(playerPosition.subtract(door.position),normal);
     const side=signedDistance>=0 ? 1 : -1;
     const standOff=Math.min(0.65,Math.abs(signedDistance)*0.7);
     this.root.position.copyFrom(door.position.add(normal.scale(standOff*side)));
     this.root.position.y=1.05;
-    this.root.rotation.y=door.alongX ? -side*Math.PI/2 : side>0 ? Math.PI : 0;
+    this.root.rotation.y=door.yaw+(side>0 ? Math.PI : 0);
     this.face.scaling.y=actions.length===1 ? 0.55 : 1;
     this.body.scaling.y=this.face.scaling.y;
     this.showActions(actions);
@@ -77,15 +77,24 @@ export class WorldInteractionPanel {
   }
 
   showNotice(anchor:Vector3,height:number,label:string|undefined,
-    time:number,alert=false,alongX=false):void {
+    time:number,alert=false,yaw=0):void {
     if (!label) { this.root.setEnabled(false); return; }
     this.root.position.copyFrom(anchor);
     this.root.position.y=anchor.y+height+Math.sin(time*3)*0.1;
-    this.root.rotation.y=alongX ? -Math.PI/2 : 0;
+    this.root.rotation.y=yaw;
     this.face.scaling.y=this.body.scaling.y=this.reverseFace.scaling.y=0.55;
     const signature=`notice:${label}:${alert}`;
     if (signature!==this.signature) { this.signature=signature; this.drawNotice(label,alert); }
     this.reverseFace.setEnabled(true);
+    this.root.setEnabled(true);
+  }
+
+  showFacingNotice(anchor:Vector3,playerPosition:Vector3,height:number,standOff:number,label:string):void {
+    if (!this.placeFacing(anchor,playerPosition,height,standOff)) return;
+    this.face.scaling.y=this.body.scaling.y=0.55;
+    const signature=`facing-notice:${label}`;
+    if (signature!==this.signature) { this.signature=signature; this.drawNotice(label,false); }
+    this.reverseFace.setEnabled(false);
     this.root.setEnabled(true);
   }
 

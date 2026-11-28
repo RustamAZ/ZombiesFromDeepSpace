@@ -1,6 +1,8 @@
 import { Vector3 } from '@babylonjs/core';
 
 type VacuumData = { start: Vector3; destination: Vector3; elapsed: number; duration: number };
+export type DebrisArea = {min:Vector3;max:Vector3;contains?:(point:Vector3)=>boolean};
+const inArea=(p:Vector3,b:DebrisArea)=>p.x>=b.min.x && p.x<=b.max.x && p.z>=b.min.z && p.z<=b.max.z && (!b.contains || b.contains(p));
 
 export class VoxelDebrisController {
   private readonly queue: Array<{
@@ -21,6 +23,8 @@ export class VoxelDebrisController {
     updateFallback: (dt: number) => void, isVisible: () => boolean, physical = true,
     position?:()=>Vector3, move?:(point:Vector3, scale:number)=>void, owner?:object): void {
     this.queue.push({evict,deactivatePhysics,updateFallback,isVisible,physical,position,move,owner});
+    // Cosmetic chips use no body slot. Cull overflow once in update, not per blast victim.
+    if (!physical) return;
     this.trimPhysicsOverflow();
     this.trimInvisibleOverflow();
   }
@@ -34,12 +38,11 @@ export class VoxelDebrisController {
     }
   }
 
-  countIn(bounds:{min:Vector3;max:Vector3}, includeVacuum=false): number {
+  countIn(bounds:DebrisArea, includeVacuum=false): number {
     let count=0;
     for (const entry of this.queue) {
       const point=entry.position?.();
-      if (point && (includeVacuum || !entry.vacuum) && point.x>=bounds.min.x && point.x<=bounds.max.x &&
-        point.z>=bounds.min.z && point.z<=bounds.max.z) ++count;
+      if (point && (includeVacuum || !entry.vacuum) && inArea(point,bounds)) ++count;
     }
     return count;
   }
@@ -61,12 +64,11 @@ export class VoxelDebrisController {
     this.trimInvisibleOverflow();
   }
 
-  vacuum(bounds:{min:Vector3;max:Vector3}, destination:Vector3, duration=0.65): number {
+  vacuum(bounds:DebrisArea, destination:Vector3, duration=0.65): number {
     let count=0;
     for (const entry of this.queue) {
       const point=entry.position?.();
-      if (!point || entry.vacuum || point.x<bounds.min.x || point.x>bounds.max.x ||
-        point.z<bounds.min.z || point.z>bounds.max.z) continue;
+      if (!point || entry.vacuum || !inArea(point,bounds)) continue;
       if (entry.physical) { entry.deactivatePhysics(); entry.physical=false; }
       entry.vacuum={start:point,destination:destination.clone(),elapsed:0,duration};
       ++count;

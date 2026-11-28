@@ -6,6 +6,7 @@ import type { EnemyWaveController } from '../waves/EnemyWaveController';
 import { texts } from './texts';
 import { levelTexts } from './levelTexts';
 import type { LevelScenario } from '../levels/scenarios/LevelScenario';
+import type { NavigationFrameReport } from '../navigation/NavigationFrameStats';
 
 type HealthMeter={track:HTMLDivElement;fill:HTMLDivElement;value:HTMLSpanElement};
 
@@ -22,6 +23,10 @@ export class RunHud {
   private readonly centerMain: HTMLDivElement;
   private readonly objective=document.createElement('p');
   private readonly tasks=document.createElement('ul');
+  private readonly living=document.createElement('div');
+  private lastLiving=0;
+  private readonly dropHint=document.createElement('div');
+  private navigationFrame?:HTMLDivElement;
   constructor() {
     this.root=document.createElement('div'); this.root.className='run-hud';
     this.player=this.createMeter(texts.player,'player');
@@ -31,7 +36,9 @@ export class RunHud {
     objective.textContent=texts.objective;
     this.root.append(objective);
     this.tasks.className='run-hud__tasks';
-    this.root.append(this.tasks);
+    this.living.className='run-hud__living';
+    this.living.textContent=texts.livingEnemies(0);
+    this.root.append(this.tasks,this.living);
     this.wallet=document.createElement('div'); this.wallet.className='run-wallet';
     const coin=document.createElement('span'); coin.className='run-wallet__coin';
     coin.setAttribute('aria-hidden','true');
@@ -43,7 +50,10 @@ export class RunHud {
     this.centerHeading=document.createElement('div'); this.centerHeading.className='wave-center-status__heading';
     this.centerMain=document.createElement('div'); this.centerMain.className='wave-center-status__main';
     this.center.append(this.centerHeading,this.centerMain);
-    document.querySelector('#workshop')!.append(this.root,this.wallet,this.wave,this.center);
+    this.dropHint.className='held-kit-action';
+    this.dropHint.textContent=`R · ${texts.interactR.drop}`;
+    this.dropHint.hidden=true;
+    document.querySelector('#workshop')!.append(this.root,this.wallet,this.wave,this.center,this.dropHint);
   }
   update(player: PlayerCharacter, core: Core, profile: PlayerProfile,
     run: RunProfile, waves: EnemyWaveController, scenario:LevelScenario): void {
@@ -62,17 +72,31 @@ export class RunHud {
     this.gold.textContent=`${texts.coins}: ${run.coins}`;
     this.experience.textContent=`${texts.experience}: ${profile.experience}`;
     const s=waves.status;
+    if(s.alive!==this.lastLiving) {
+      this.living.textContent=texts.livingEnemies(s.alive);
+      this.lastLiving=s.alive;
+    }
     const counting=s.phase==='preparation' || s.phase==='intermission';
     const cleaning=s.phase==='objectives';
-    this.wave.hidden=counting || cleaning;
+    const complete=s.phase==='complete';
+    this.wave.hidden=counting || cleaning || complete;
     if (!this.wave.hidden) this.wave.textContent=texts.waveEnemies(s.wave,s.remaining);
-    this.center.hidden=!counting && !cleaning;
-    this.center.classList.toggle('wave-center-status--cleanup',cleaning);
+    this.center.hidden=!counting && !cleaning && !complete;
+    this.center.classList.toggle('wave-center-status--cleanup',cleaning || complete);
     this.centerHeading.textContent=counting ? texts.waveStartsIn(s.wave) : '';
     this.centerMain.textContent=counting
-      ? String(Math.ceil(s.secondsRemaining)) : cleaning ? levelTexts.tasks : '';
+      ? String(Math.ceil(s.secondsRemaining)) : cleaning ? levelTexts.tasks : complete ? levelTexts.victory : '';
   }
-  dispose(): void { this.root.remove(); this.wallet.remove(); this.wave.remove(); this.center.remove(); }
+  showDropHint(show:boolean):void { this.dropHint.hidden=!show; }
+  showNavigationFrame(report:NavigationFrameReport):void {
+    if(!this.navigationFrame) {
+      this.navigationFrame=document.createElement('div');
+      this.navigationFrame.className='run-hud__nav-stats';
+      this.root.append(this.navigationFrame);
+    }
+    this.navigationFrame.textContent=texts.navigationFrame(report);
+  }
+  dispose(): void { this.root.remove(); this.wallet.remove(); this.wave.remove(); this.center.remove(); this.dropHint.remove(); }
   private createMeter(label:string,kind:string):HealthMeter {
     const root=document.createElement('div'); root.className=`health-meter health-meter--${kind}`;
     const heading=document.createElement('div'); heading.className='health-meter__heading';

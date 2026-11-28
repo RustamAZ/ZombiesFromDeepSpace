@@ -76,6 +76,8 @@ body {
 .level-menu button:disabled { opacity:.5; cursor:not-allowed; }
 .run-hud__tasks { padding-left:18px; margin:8px 0 0; max-width:260px; font-size:12px; line-height:1.4; }
 .run-hud__tasks:empty { display:none; }
+.run-hud__living { font-size:12px; font-weight:700; font-variant-numeric:tabular-nums; }
+.run-hud__nav-stats { white-space:pre-line; font-size:11px; line-height:1.4; font-variant-numeric:tabular-nums; color:#fff; }
 .run-hud__tasks .is-complete { color:#9cded0; }
 .defeat-screen p { max-width:440px; margin:0 auto; padding:0 16px; color:white; }
 .main-menu, .defeat-screen { overflow-y:auto; }
@@ -290,6 +292,7 @@ body {
   pointer-events:auto; touch-action:none; -webkit-tap-highlight-color:transparent;
 }
 .mobile-control[hidden] { display:none; }
+.mobile-control:disabled { opacity:.65; }
 .mobile-control:active { transform:scale(.94); background:#278784e8; }
 .mobile-control--fire {
   right:max(42px,calc(env(safe-area-inset-right) + 24px));
@@ -302,12 +305,19 @@ body {
 .mobile-control--fire:active {
   transform:translate(var(--mobile-fire-x,0),var(--mobile-fire-y,0)) scale(.94);
 }
-.mobile-control--interact,.mobile-control--purchase {
+.mobile-action-stack {
+  position:absolute; display:grid; justify-items:end; gap:6px;
   right:max(132px,calc(env(safe-area-inset-right) + 114px));
-  max-width:190px; padding:8px 12px; font-size:12px; line-height:1.15;
+  bottom:max(22px,env(safe-area-inset-bottom));
+  max-width:min(190px,40%); pointer-events:none;
 }
-.mobile-control--interact { bottom:max(76px,calc(env(safe-area-inset-bottom) + 62px)); }
-.mobile-control--purchase { bottom:max(22px,env(safe-area-inset-bottom)); }
+.mobile-action-stack .mobile-control {
+  position:relative; max-width:100%; padding:8px 12px; font-size:12px; line-height:1.15;
+}
+.held-kit-action {
+  position:absolute; left:50%; bottom:8%; transform:translateX(-50%);
+  background:#111820d9; color:white; padding:6px 12px; border-radius:4px; font:inherit; pointer-events:none;
+}
 .mobile-control--pause {
   top:max(62px,calc(env(safe-area-inset-top) + 50px)); right:max(12px,env(safe-area-inset-right));
   width:44px; height:44px; min-width:44px; min-height:44px; font-size:19px;

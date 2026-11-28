@@ -11,7 +11,7 @@ export class CubeBlaster extends Weapon<typeof cubeBlasterConfig> {
 
   tryFire(context: ShotContext): boolean {
     if (context.timeSeconds < this.nextShotTime) return false;
-    this.spawner.spawn(context.aimRay, this.config);
+    this.spawner.spawn(context.aimRay, this.config.createProjectile);
     this.nextShotTime = context.timeSeconds + this.config.shotIntervalSeconds;
     return true;
   }

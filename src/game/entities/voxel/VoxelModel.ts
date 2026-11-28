@@ -4,14 +4,16 @@ import { PhysicsShapeType } from '@babylonjs/core/Physics/v2/IPhysicsEnginePlugi
 import { SolidParticleSystem } from '@babylonjs/core/Particles/solidParticleSystem';
 import type { SolidParticle } from '@babylonjs/core/Particles/solidParticle';
 import { VoxelDebrisController } from './VoxelDebrisController';
+import { BatchedDebrisCube, DebrisCubeBatch } from './DebrisCubeBatch';
 import { findUnsupportedGroups, fractureConnectedGroup } from './VoxelStructure';
 import { createVoxelSolidBody } from './VoxelSolidBody';
+import { buildRigidVoxelFragment } from './RigidVoxelFragment';
 import { shooterDebrisConfig } from './destructionConfig';
 import type { VoxelDamageCandidate, VoxelDamageEntry, VoxelDamagePlan, VoxelWorldBounds } from './VoxelImpact';
 import { defaultVoxPalette, parseVox, type ParsedVoxModel } from './VoxAsset';
 
 type Debris = {
-  mesh: Mesh;
+  mesh: Mesh | BatchedDebrisCube;
   aggregate?: Pick<PhysicsAggregate, 'body' | 'dispose'>;
   mass: number;
   fallbackVelocity?: Vector3;
@@ -73,6 +75,7 @@ export class VoxelModel {
   private gridSizeZ = 1;
   private gridOrigin = Vector3.Zero();
   private floorAnchors?: VoxelPiece[];
+  private blastShell?: VoxelPiece[];
   private solidBody?: ReturnType<typeof createVoxelSolidBody>;
   private hasLocalDeformation = false;
   private debrisFloorY = 0;
@@ -156,17 +159,45 @@ export class VoxelModel {
 
   enableCoreSupport(isCore: (depth: number) => boolean): void {
     this.mobile = true;
-    this.floorAnchors = this.pieces.filter(p => isCore(p.depth01));
+    this.floorAnchors = [];
+    this.blastShell = [];
+    for (const piece of this.pieces) {
+      (isCore(piece.depth01) ? this.floorAnchors : this.blastShell).push(piece);
+    }
   }
 
-  setPose(feet: Vector3, yaw: number): void {
-    this.root.position.copyFrom(feet);
-    this.root.rotation.y = this.rotationY = yaw;
-    this.root.computeWorldMatrix(true);
+  chipBlastShell(center: Vector3, radius: number, normal: Vector3): void {
+    if (!this.blastShell || !this.activePieceCount) return;
+    const local=this.getLocalPosition(center);
+    let nearest:VoxelPiece|undefined;
+    let best=radius*radius;
+    for (const piece of this.blastShell) {
+      if (!piece.isActive) continue;
+      const distance=Vector3.DistanceSquared(local,piece.localPosition);
+      if (distance<=best) { best=distance; nearest=piece; }
+    }
+    if (!nearest) return;
+    const position=this.getWorldPosition(nearest.localPosition);
+    this.applyDamagePlan({removedVoxelIds:[nearest.id],debrisEntries:[]});
+    const color=this.palette[nearest.colorIndex] ?? Color3.White();
+    let visual:Debris['mesh'];
+    if (this.scene.getEngine().getCaps().instancedArrays) {
+      visual=DebrisCubeBatch.forScene(this.scene).add(position,this.voxelSize,color);
+    } else {
+      visual=MeshBuilder.CreateBox('blast-chip',{size:this.voxelSize},this.scene);
+      visual.position.copyFrom(position);
+      visual.material=this.getMaterial(nearest.colorIndex,this.palette);
+    }
+    const velocity=normal.scale(-shooterDebrisConfig.blastChipSpeed);
+    velocity.y+=shooterDebrisConfig.blastChipLift;
+    this.registerDebris(visual,0,velocity,Vector3.Zero());
   }
 
-  setTiltX(angle: number): void {
-    this.root.rotation.x=angle;
+  setPose(feet: Vector3, yaw: number, tilt=this.root.rotation.x): void {
+    if(this.root.position.equals(feet) && this.rotationY===yaw && this.root.rotation.x===tilt)return;
+    if(!this.root.position.equals(feet))this.root.position.copyFrom(feet);
+    if(this.rotationY!==yaw)this.root.rotation.y=this.rotationY=yaw;
+    if(this.root.rotation.x!==tilt)this.root.rotation.x=tilt;
     this.root.computeWorldMatrix(true);
   }
 
@@ -209,11 +240,33 @@ export class VoxelModel {
   disposeAll(): void {
     this.debrisController.evictOwner(this);
     this.disposeIntact();
+    for(const material of this.materials.values())material.dispose();
+    this.materials.clear();
   }
 
-  collapse(physicalFragmentCount = Number.POSITIVE_INFINITY): void {
-    const ids = Array.from(this.piecesByGridKey.values(), p => p.id);
-    if (ids.length) this.applyDamagePlan({ removedVoxelIds: [], debrisEntries: [] }, [ids], 1, physicalFragmentCount);
+  collapseRigidBands(splitRow:number, upperYaw:number):void {
+    if(!this.activePieceCount)return;
+    const lower:VoxelPiece[]=[],upper:VoxelPiece[]=[];
+    for(const p of this.piecesByGridKey.values()) {
+      (p.gridY<splitRow ? lower : upper).push(p);
+      p.isActive=false;
+    }
+    for(const part of [lower,upper]) {
+      if(!part.length)continue;
+      const origin=this.groupOrigin(part), isUpper=part===upper;
+      const mesh=buildRigidVoxelFragment(this.scene,part,this.voxelSize,this.palette,isUpper?upperYaw:0,origin);
+      mesh.position.copyFrom(this.getWorldPosition(origin));
+      mesh.rotation.set(this.root.rotation.x,this.rotationY,0);
+      mesh.material=this.getMaterial(-1,this.palette);
+      const side=isUpper?1:-1, mass=part.length*0.01;
+      const speed=side*shooterDebrisConfig.detachedSplitSpeed;
+      const velocity=new Vector3(speed*Math.cos(this.rotationY),shooterDebrisConfig.detachedLiftSpeed,-speed*Math.sin(this.rotationY));
+      this.registerDebris(mesh,mass,velocity,new Vector3(0,side*shooterDebrisConfig.detachedSpinSpeed,side*0.35),
+        !isUpper || !lower.length ? ()=>new PhysicsAggregate(mesh,PhysicsShapeType.BOX,{mass,friction:0.5,restitution:0},this.scene) : undefined);
+    }
+    this.activePieceCount=0;
+    this.piecesByGridKey.clear();
+    this.disposeIntact();
   }
 
   private refreshSolidBody(): void {
@@ -262,10 +315,14 @@ export class VoxelModel {
     return { min, max };
   }
 
+  isIntactVoxel(id:number):boolean {
+    return this.piecesById.get(id)?.isActive === true;
+  }
+
   getSolidContactBounds(
     worldBounds?: VoxelWorldBounds,
     containsPoint?: (worldPosition: Vector3) => boolean
-  ): VoxelWorldBounds[] {
+  ): (VoxelWorldBounds & {voxelId:number})[] {
     if (this.activePieceCount === 0) {
       return [];
     }
@@ -274,7 +331,11 @@ export class VoxelModel {
     const candidatePieces = worldBounds
       ? this.getActivePiecesInWorldBounds(worldBounds)
       : this.piecesByGridKey.values();
-    const contactBounds: VoxelWorldBounds[] = [];
+    const sin=Math.sin(this.rotationY), cos=Math.cos(this.rotationY);
+    const diagonal=Math.abs(sin*cos)>1e-6;
+    const extent=diagonal ? half*(Math.abs(sin)+Math.abs(cos)) : half;
+    const halfExtents=new Vector3(extent,half,extent);
+    const contactBounds: (VoxelWorldBounds & {voxelId:number})[] = [];
 
     for (const piece of candidatePieces) {
       const worldPosition = this.getWorldPosition(piece.localPosition);
@@ -283,11 +344,11 @@ export class VoxelModel {
         continue;
       }
 
-      const halfExtents = new Vector3(half, half, half);
-
       contactBounds.push({
+        voxelId:piece.id,
         min: worldPosition.subtract(halfExtents),
-        max: worldPosition.add(halfExtents)
+        max: worldPosition.add(halfExtents),
+        ...(diagonal && {footprint:{x:worldPosition.x,z:worldPosition.z,sin,cos,halfWidth:half,halfDepth:half}})
       });
     }
 
@@ -379,7 +440,10 @@ export class VoxelModel {
         chunk.particles.dispose();
         this.chunks.delete(chunkKey);
       } else {
-        chunk.particles.setParticles();
+        const single=!groups.length && damagePlan.removedVoxelIds.length===1
+          ? this.piecesById.get(damagePlan.removedVoxelIds[0]) : undefined;
+        if (single) chunk.particles.setParticles(single.particleIndex,single.particleIndex);
+        else chunk.particles.setParticles();
         if (chunk.mesh.checkCollisions) {
           // The collision coordinator caches transformed triangles for each submesh.
           for (const subMesh of chunk.mesh.subMeshes) subMesh.refreshBoundingInfo();
@@ -534,7 +598,7 @@ export class VoxelModel {
         friction: 0.45,
         restitution: 0,
         extents: new Vector3(this.voxelSize, this.voxelSize, this.voxelSize)
-      }, this.scene));
+      }, this.scene), piece.colorIndex);
     }
   }
 
@@ -603,16 +667,18 @@ export class VoxelModel {
       this.registerDebris(cube,0.01,velocity,spin,()=>new PhysicsAggregate(cube,PhysicsShapeType.BOX,{
         mass:0.01,friction:0.45,restitution:0,
         extents:new Vector3(this.voxelSize,this.voxelSize,this.voxelSize)
-      },this.scene));
+      },this.scene),piece.colorIndex);
     }
   }
 
-  private registerDebris(mesh: Mesh, mass: number, velocity: Vector3, spin: Vector3,
-    createBody?: () => Debris['aggregate']): void {
+  private registerDebris(mesh: Debris['mesh'], mass: number, velocity: Vector3, spin: Vector3,
+    createBody?: () => Debris['aggregate'], cubeColorIndex?: number): void {
     mesh.computeWorldMatrix(true);
-    mesh.metadata={...mesh.metadata,voxelDebris:true};
     const item: Debris = { mesh, mass, aggregate: createBody?.() };
-    mesh.isPickable = mesh.checkCollisions = true;
+    if (mesh instanceof Mesh) {
+      mesh.metadata={...mesh.metadata,voxelDebris:true};
+      mesh.isPickable = mesh.checkCollisions = !!item.aggregate;
+    }
     item.aggregate?.body.setLinearDamping(0.12);
     item.aggregate?.body.setAngularDamping(0.42);
     item.aggregate?.body.setLinearVelocity(velocity);
@@ -620,13 +686,12 @@ export class VoxelModel {
     if (!item.aggregate) {
       item.fallbackVelocity = velocity.clone();
       item.fallbackAngularVelocity = spin.clone();
-      mesh.isPickable = mesh.checkCollisions = false;
     }
     this.debris.push(item);
     this.debrisController.register(() => {
       item.aggregate?.dispose();
       item.aggregate=undefined;
-      mesh.dispose();
+      item.mesh.dispose();
       const index=this.debris.indexOf(item);
       if (index>=0) this.debris.splice(index,1);
     },()=>{
@@ -634,11 +699,19 @@ export class VoxelModel {
       item.fallbackAngularVelocity=item.aggregate?.body.getAngularVelocity().clone() ?? Vector3.Zero();
       item.aggregate?.dispose();
       item.aggregate=undefined;
-      mesh.isPickable=mesh.checkCollisions=false;
+      const oldMesh=item.mesh;
+      if (!(oldMesh instanceof Mesh)) return;
+      oldMesh.isPickable=oldMesh.checkCollisions=false;
+      if (cubeColorIndex!==undefined && this.scene.getEngine().getCaps().instancedArrays) {
+        item.mesh=DebrisCubeBatch.forScene(this.scene).add(oldMesh.position,this.voxelSize,
+          this.palette[cubeColorIndex] ?? Color3.White(),oldMesh);
+        oldMesh.dispose();
+      }
     },dt=>{
       const velocity=item.fallbackVelocity;
       const angularVelocity=item.fallbackAngularVelocity;
-      if (!velocity || !angularVelocity || mesh.isDisposed()) return;
+      if (!velocity || !angularVelocity) return;
+      const mesh=item.mesh;
 
       velocity.y-=shooterDebrisConfig.fallbackGravity*dt;
       const airDamping=Math.exp(-shooterDebrisConfig.fallbackAirDamping*dt);
@@ -652,6 +725,7 @@ export class VoxelModel {
       if (bottom>this.debrisFloorY) return;
 
       mesh.position.y+=this.debrisFloorY-bottom;
+      if (mesh instanceof BatchedDebrisCube) mesh.computeWorldMatrix();
       velocity.y=0;
       const groundDamping=Math.exp(-shooterDebrisConfig.fallbackGroundDamping*dt);
       velocity.x*=groundDamping;
@@ -664,10 +738,15 @@ export class VoxelModel {
       }
     },()=>{
       const camera=this.scene.activeCamera;
-      return !!camera && mesh.isEnabled() && mesh.isVisible && camera.isInFrustum(mesh);
-    }, !!item.aggregate,()=>mesh.position.clone(),(point,scale)=>{
+      const visual=item.mesh;
+      if (!camera) return false;
+      if (visual instanceof BatchedDebrisCube) return camera.isInFrustum(visual.getBoundingInfo());
+      return visual.isEnabled() && visual.isVisible && camera.isInFrustum(visual);
+    }, !!item.aggregate,()=>item.mesh.position.clone(),(point,scale)=>{
+      const mesh=item.mesh;
       mesh.position.copyFrom(point);
       mesh.scaling.setAll(Math.max(0.001,scale));
+      if (mesh instanceof BatchedDebrisCube) mesh.computeWorldMatrix();
     },this);
   }
 

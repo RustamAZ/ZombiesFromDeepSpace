@@ -5,7 +5,20 @@ import { nba } from 'ngraph.path';
 
 export type NavigationCell = { min: Vector3; max: Vector3 };
 type Bounds = NavigationCell;
-type Solid = Bounds & { floor?: boolean; slope?: number; breakable?: boolean };
+type Footprint = { x:number; z:number; sin:number; cos:number; halfWidth:number; halfDepth:number };
+type Solid = Bounds & { floor?: boolean; slope?: number; breakable?: boolean; footprint?:Footprint; octagonRadius?:number };
+function footprintDistanceSquared(p:Vector3,s:Solid):number {
+  let dx:number,dz:number;
+  if(s.footprint) {
+    const f=s.footprint,lx=p.x-f.x,lz=p.z-f.z;
+    dx=Math.max(0,Math.abs(lx*f.cos-lz*f.sin)-f.halfWidth);
+    dz=Math.max(0,Math.abs(lx*f.sin+lz*f.cos)-f.halfDepth);
+  } else {
+    dx=Math.max(s.min.x-p.x,0,p.x-s.max.x);
+    dz=Math.max(s.min.z-p.z,0,p.z-s.max.z);
+  }
+  return dx*dx+dz*dz;
+}
 const key = (x: number, z: number) => x + ':' + z;
 
 export type WanderPreferences = {
@@ -30,7 +43,7 @@ export class NavigationGrid {
   private readonly edgeCache = new Map<string, boolean>();
   revision = 0;
 
-  constructor(readonly radius: number, readonly height: number) {}
+  constructor(readonly radius: number, readonly height: number, private readonly onPathMeasured?:(ms:number)=>void) {}
 
   add(s: Solid): void { this.index(s, true); }
 
@@ -61,7 +74,14 @@ export class NavigationGrid {
   }
 
   private top(s: Solid, z: number): number { return s.max.y + (s.slope ?? 0) * (z - s.min.z); }
-  private over(x: number, z: number, s: Bounds, pad: number): boolean {
+  private over(x: number, z: number, s: Solid, pad: number): boolean {
+    if (s.footprint) {
+      const f=s.footprint,dx=x-f.x,dz=z-f.z;
+      return Math.abs(dx*f.cos-dz*f.sin)<=f.halfWidth+pad &&
+        Math.abs(dx*f.sin+dz*f.cos)<=f.halfDepth+pad;
+    }
+    if (s.octagonRadius && Math.abs(x-(s.min.x+s.max.x)/2)+Math.abs(z-(s.min.z+s.max.z)/2)>
+      (s.octagonRadius+pad)*Math.SQRT2) return false;
     return x >= s.min.x-pad && x <= s.max.x+pad && z >= s.min.z-pad && z <= s.max.z+pad;
   }
 
@@ -92,11 +112,15 @@ export class NavigationGrid {
   breakableAt(p:Vector3): NavigationCell | undefined {
     for (const cell of this.columns.get(key(Math.floor(p.x),Math.floor(p.z))) ?? []) {
       if (!cell.breakable || cell.max.y<=p.y || cell.min.y>=p.y+this.height) continue;
-      const dx=Math.max(cell.min.x-p.x,0,p.x-cell.max.x);
-      const dz=Math.max(cell.min.z-p.z,0,p.z-cell.max.z);
-      if (dx*dx+dz*dz<=this.radius*this.radius) return cell;
+      if (footprintDistanceSquared(p,cell)<=this.radius*this.radius) return cell;
     }
     return undefined;
+  }
+
+  canStrikeCell(from:Vector3,cell:NavigationCell,reach:number):boolean {
+    const x=Math.floor((cell.min.x+cell.max.x)*0.5), z=Math.floor((cell.min.z+cell.max.z)*0.5);
+    return cell.max.y>from.y && cell.min.y<from.y+this.height &&
+      footprintDistanceSquared(from,cell)<=reach*reach && this.columns.get(key(x,z))?.has(cell)===true;
   }
 
   breakableAhead(from:Vector3,toward:Vector3,distance:number): NavigationCell | undefined {
@@ -125,14 +149,13 @@ export class NavigationGrid {
           if (seen.has(cell)) continue;
           seen.add(cell);
           if (!cell.breakable || cell.max.y<=from.y || cell.min.y>=from.y+this.height) continue;
-          const dx=Math.max(cell.min.x-from.x,0,from.x-cell.max.x);
-          const dz=Math.max(cell.min.z-from.z,0,from.z-cell.max.z);
-          if (dx*dx+dz*dz>reach*reach) continue;
+          const dist2=footprintDistanceSquared(from,cell);
+          if (dist2>reach*reach) continue;
           const center=cell.min.add(cell.max).scaleInPlace(0.5);
           const forward=(center.x-from.x)*direction.x+(center.z-from.z)*direction.z;
           if (forward < -0.15) continue;
           const lateral=(center.x-from.x)*direction.z-(center.z-from.z)*direction.x;
-          const score=dx*dx+dz*dz+0.15*lateral*lateral+0.06*(center.y-from.y-this.height*0.5)**2;
+          const score=dist2+0.15*lateral*lateral+0.06*(center.y-from.y-this.height*0.5)**2;
           if (score<best) { best=score; nearest=cell; }
         }
       }
@@ -171,18 +194,20 @@ export class NavigationGrid {
   }
 
   // A usable gap in a voxel doorway may lie entirely between two metre-grid lanes.
-  addDoorLanes(x: number, z: number, alongX: boolean, width: number, cellSize: number): void {
+  addDoorLanes(x: number, z: number, yaw: number, width: number, cellSize: number): void {
+    const sin=Math.sin(yaw),cos=Math.cos(yaw);
     const lanes=Math.round(width/cellSize)*2;
     for (let i=1;i<lanes;++i) {
       const offset=(i/lanes-0.5)*width;
-      if (Math.abs(offset)+this.radius>=width/2 || Number.isInteger(offset)) continue;
+      if (Math.abs(offset)+this.radius>=width/2 || (yaw===0 && Number.isInteger(offset))) continue;
       const ends=[-1,1].map(side=>{
-        const p=new Vector3(x+(alongX?side:offset),0,z+(alongX?offset:side));
+        const p=new Vector3(x+sin*side+cos*offset,0,z+cos*side-sin*offset);
         const id='door:'+p.x+':'+p.z;
         this.graph.addNode(id,p);
-        for (const across of [Math.floor(offset),Math.ceil(offset)]) {
-          for (const depth of [1,2]) {
-            const k=key(x+(alongX?side*depth:across),z+(alongX?across:side*depth));
+        for(let gx=Math.floor(p.x-0.5);gx<=Math.ceil(p.x+0.5);gx++) {
+          for(let gz=Math.floor(p.z-0.5);gz<=Math.ceil(p.z+0.5);gz++) {
+            if (((gx-x)*sin+(gz-z)*cos)*side<0.5 || (gx-p.x)**2+(gz-p.z)**2>2.25) continue;
+            const k=key(gx,gz);
             for (const n of this.nodes.get(k) ?? []) {
               if (!n.startsWith('door:') && this.graph.getNode(n)!.data.y===0) this.graph.addLink(n,id,true);
             }
@@ -244,9 +269,7 @@ export class NavigationGrid {
         continue;
       }
       if (allowBreakable && s.breakable) continue;
-      const dx=Math.max(s.min.x-p.x,0,p.x-s.max.x);
-      const dz=Math.max(s.min.z-p.z,0,p.z-s.max.z);
-      if (dx*dx+dz*dz>this.radius*this.radius) continue;
+      if (footprintDistanceSquared(p,s)>this.radius*this.radius) continue;
       const z=Math.min(s.max.z,Math.max(s.min.z,p.z));
       const bottom=s.min.y+(s.slope ?? 0)*(z-s.min.z);
       if (this.top(s,z)>p.y+(s.floor?0.14:0.025) && bottom<p.y+this.height-0.01) return s;
@@ -338,6 +361,13 @@ export class NavigationGrid {
   }
 
   path(from: Vector3, to: Vector3, canBreach=true): NavigationPath {
+    if(!this.onPathMeasured)return this.buildPath(from,to,canBreach);
+    const startMs=performance.now();
+    try { return this.buildPath(from,to,canBreach); }
+    finally { this.onPathMeasured(performance.now()-startMs); }
+  }
+
+  private buildPath(from: Vector3, to: Vector3, canBreach:boolean):NavigationPath {
     if (this.passable(from,to)) return {points:[to.clone()]};
     const start=this.nearest(from);
     const end=this.nearest(to) ?? this.nearest(to,true);

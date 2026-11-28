@@ -18,13 +18,13 @@ export class SlidingDoor {
     scene: Scene,
     debris: VoxelDebrisController,
     private readonly center: Vector3,
-    readonly alongX: boolean,
+    readonly yaw: number,
     width: number,
     private readonly onClosed: (target: VoxelDamageTarget, initial: boolean) => void,
     private readonly onOpened: (target: VoxelDamageTarget) => void,
     readonly config = slidingDoorConfig
   ) {
-    this.visual = new SlidingDoorVisual(scene, debris, center, alongX, width, config.panelHeight, config.voxelLayers);
+    this.visual = new SlidingDoorVisual(scene, debris, center, yaw, width, config.panelHeight, config.voxelLayers);
     this.targets = [
       new VoxelDamageTarget(this.visual.left, 'soft', 0),
       new VoxelDamageTarget(this.visual.right, 'soft', 0)

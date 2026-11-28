@@ -14,9 +14,10 @@ export class DesktopInput extends GameInput {
       if (!this.enabled) return;
       if (event.code==='KeyE' && !event.repeat) this.commands.add('interact');
       else if (event.code==='KeyQ' && !event.repeat) this.commands.add('purchase');
+      else if (event.code==='KeyR' && !event.repeat) this.commands.add('alternate');
       else if (event.code==='F3' && !event.repeat) this.commands.add('debug');
       else this.keys.add(event.code);
-      if (event.code.startsWith('Arrow') || ['KeyE','KeyQ','F3'].includes(event.code)) event.preventDefault();
+      if (event.code.startsWith('Arrow') || ['KeyE','KeyQ','KeyR','F3'].includes(event.code)) event.preventDefault();
     },options);
     window.addEventListener('keyup',event=>this.keys.delete(event.code),options);
     document.addEventListener('mousemove',event=>{

@@ -2,7 +2,7 @@ import { Vector3 } from '@babylonjs/core';
 import { VoxelImpactMaterialController } from '../entities/voxel/VoxelImpactMaterialController';
 import type { VoxelContactInfo, VoxelMaterialType } from '../entities/voxel/VoxelImpact';
 import type { VoxelModel } from '../entities/voxel/VoxelModel';
-import type { Impact } from './ProjectileSystem';
+import type { Impact } from '../entities/projectiles/Projectile';
 import { VoxelLayerResolver } from '../entities/voxel/VoxelLayerResolver';
 
 type ImpactReaction = (point: Vector3, normal: Vector3, impact: Impact) => void;
@@ -18,6 +18,11 @@ export class VoxelDamageTarget {
     } else {
       model.enableFloorSupport(floorY);
     }
+  }
+
+  hitFromBlast(point: Vector3, normal: Vector3, impact: Impact, radius: number): void {
+    this.onImpact?.(point, normal, impact);
+    this.model.chipBlastShell(point,radius,normal);
   }
 
   hit(point: Vector3, normal: Vector3, impact: Impact): boolean {

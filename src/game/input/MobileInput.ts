@@ -27,6 +27,7 @@ export class MobileInput extends GameInput {
     this.bindFireLook(options);
     this.bindCommand(this.controls.interact,'interact',options);
     this.bindCommand(this.controls.purchase,'purchase',options);
+    this.bindCommand(this.controls.alternate,'alternate',options);
     this.bindCommand(this.controls.pause,'pause',options);
     window.addEventListener('blur',()=>this.reset(),options);
     document.addEventListener('visibilitychange',()=>{ if (document.hidden) this.reset(); },options);
@@ -37,7 +38,9 @@ export class MobileInput extends GameInput {
   get moveZ():number { return this.movementZ; }
   get firing():boolean { return this.firingValue; }
   setEnabled(enabled:boolean):void { this.enabled=enabled; this.controls.setVisible(enabled); if (!enabled) this.reset(); }
-  setActions(interact?:string,purchase?:string):void { this.controls.setActions(interact,purchase); }
+  setActions(interact?:string,purchase?:string,alternate?:string,interactDisabled=false):void {
+    this.controls.setActions(interact,purchase,alternate,interactDisabled);
+  }
   consumeLook():LookDelta { const value=this.look; this.look={x:0,y:0}; return value; }
   consume(command:InputCommand):boolean { return this.commands.delete(command); }
   reset():void {
@@ -125,7 +128,7 @@ export class MobileInput extends GameInput {
   }
   private bindCommand(button:HTMLButtonElement,command:InputCommand,options:AddEventListenerOptions):void {
     button.addEventListener('pointerdown',event=>{
-      if (!this.enabled || event.pointerType!=='touch') return;
+      if (!this.enabled || button.disabled || event.pointerType!=='touch') return;
       event.preventDefault(); event.stopPropagation(); this.commands.add(command);
     },options);
   }

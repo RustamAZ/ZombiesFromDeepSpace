@@ -12,7 +12,7 @@ export class SlidingDoorVisual {
   private readonly closedLeft: Vector3;
   private readonly closedRight: Vector3;
   constructor(scene: Scene, debris: VoxelDebrisController, position: Vector3,
-    private readonly alongX: boolean, width: number, height: number, private readonly layers: number) {
+    private readonly yaw: number, width: number, height: number, private readonly layers: number) {
     const columns=Math.round(width/cell), rows=Math.round(height/cell);
     const leftColumns=Math.floor(columns/2), rightColumns=columns-leftColumns;
     this.left=this.createHalf(scene,debris,leftColumns,rows,0,columns);
@@ -22,10 +22,10 @@ export class SlidingDoorVisual {
     this.setOffset(0);
   }
   setOffset(distance: number): void {
-    this.left.setPose(this.closedLeft.add(this.axis(-distance)),0);
-    this.right.setPose(this.closedRight.add(this.axis(distance)),0);
+    this.left.setPose(this.closedLeft.add(this.axis(-distance)),this.yaw);
+    this.right.setPose(this.closedRight.add(this.axis(distance)),this.yaw);
   }
-  private axis(amount: number): Vector3 { return this.alongX ? new Vector3(0,0,amount) : new Vector3(amount,0,0); }
+  private axis(amount: number): Vector3 { return new Vector3(Math.cos(this.yaw)*amount,0,-Math.sin(this.yaw)*amount); }
   private createHalf(scene: Scene, debris: VoxelDebrisController, columns: number, rows: number,
     firstColumn: number, totalColumns: number): VoxelModel {
     const voxels: VoxVoxel[]=[];
@@ -34,11 +34,11 @@ export class SlidingDoorVisual {
       const r=Math.hypot(globalColumn-(totalColumns-1)/2,y-(rows-1)/2);
       const color=r<=1.2?4:r<=2.35?3:r<=3.45?2:y%3===0 || (globalColumn+2*Math.floor(y/3))%5===0?1:0;
       // Vox asset uses x and y for the floor plane and z for height.
-      voxels.push({x:this.alongX?depth:across,y:this.alongX?across:depth,z:y,colorIndex:color});
+      voxels.push({x:across,y:depth,z:y,colorIndex:color});
     }
     return VoxelModel.fromData(scene, {
       // Parsed VOX data stores X and Y on the floor plane, with Z as height.
-      size: new Vector3(this.alongX ? this.layers : columns, this.alongX ? columns : this.layers, rows),
+      size: new Vector3(columns,this.layers,rows),
       voxels,
       palette
     }, Vector3.Zero(), debris, cell);

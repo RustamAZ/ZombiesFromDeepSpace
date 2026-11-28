@@ -1,4 +1,4 @@
-export type InputCommand='interact'|'purchase'|'pause'|'debug';
+export type InputCommand='interact'|'purchase'|'alternate'|'pause'|'debug';
 export type LookDelta={x:number;y:number};
 
 export abstract class GameInput {

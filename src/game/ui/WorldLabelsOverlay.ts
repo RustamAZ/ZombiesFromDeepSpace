@@ -1,4 +1,4 @@
-import { Matrix, Ray, Scene, Vector3, type Viewport } from '@babylonjs/core';
+import { Matrix, Scene, Vector3, type Viewport } from '@babylonjs/core';
 import type { Workshop } from '../shooter/Workshop';
 import { WorldInteractionPanel, type InteractionAction } from './WorldInteractionPanel';
 import { texts } from './texts';
@@ -37,7 +37,7 @@ export class WorldLabelsOverlay {
     this.cleanupNotices=workshop.placedCleanupButtons.map(()=>new WorldInteractionPanel(scene));
   }
 
-  update(playerPosition:Vector3,aim:Ray):void {
+  update(playerPosition:Vector3,interaction:ReturnType<Workshop['getInteractions']>):void {
     while(this.ammoLabels.length<this.workshop.placedTurrets.length) {
       this.ammoLabels.push(this.createLabel('turret-ammo'));
       this.turretPanels.push(new WorldInteractionPanel(this.scene));
@@ -56,14 +56,14 @@ export class WorldLabelsOverlay {
       roomId:this.workshop.nearestRoomId(eye.x,eye.z)};
     const canPurchase=this.workshop.waves.canPurchase;
     this.noticeTime+=Math.min(0.05,this.scene.getEngine().getDeltaTime()/1000);
-    const interaction=this.workshop.getInteractions(playerPosition,aim);
     const isSelected=(position:Vector3|undefined,anchor:Vector3)=>
       !!position && Vector3.DistanceSquared(position,anchor)<0.01;
 
     this.workshop.placedTurrets.forEach((turret,i)=>{
-      this.place(this.ammoLabels[i],`${turret.ammo}/${turret.maxAmmo}`,
+      this.place(this.ammoLabels[i],`${texts.turretLevel(turret.level)} · ${turret.ammo}/${turret.maxAmmo}`,
         turret.position.add(new Vector3(0,1.6,0)),projection);
-      const action=canPurchase && !isSelected(interaction.qPosition,turret.position)
+      const action=canPurchase && !isSelected(interaction.qPosition,turret.position) &&
+        !isSelected(interaction.rPosition,turret.position)
         ? turret.isDestroyed ? texts.worldPrompts.rebuild
           : turret.ammo<turret.maxAmmo ? texts.worldPrompts.ammo : undefined
         : undefined;
@@ -76,7 +76,7 @@ export class WorldLabelsOverlay {
         door.state==='closed' && door.isDamaged
         ? texts.worldPrompts.repair : undefined;
       this.doorNotices[i].showNotice(door.position,3.5,
-        this.noticeVisible(door.position,projection) ? action : undefined,this.noticeTime,true,door.alongX);
+        this.noticeVisible(door.position,projection) ? action : undefined,this.noticeTime,true,door.yaw);
     });
     this.workshop.placedCleanupButtons.forEach((button,i)=>{
       const action=canPurchase && !isSelected(interaction.ePosition,button.position) &&
@@ -103,10 +103,14 @@ export class WorldLabelsOverlay {
       this.doorPanels[i].showDoor(door,playerPosition,selected ? doorActions : []);
     });
     this.workshop.placedTurrets.forEach((turret,i)=>{
-      const selected=canPurchase && isSelected(interaction.qPosition,turret.position) &&
-        (interaction.q==='ammo' || interaction.q==='turret');
-      this.turretPanels[i].showFacing(turret.position,playerPosition,1.1,0.85,
-        selected && qAction ? [qAction] : []);
+      const actions:InteractionAction[]=[];
+      if (canPurchase && qAction && isSelected(interaction.qPosition,turret.position) &&
+        (interaction.q==='ammo' || interaction.q==='turret')) actions.push(qAction);
+      if (canPurchase && interaction.r==='upgrade' && isSelected(interaction.rPosition,turret.position)) {
+        const cost=interaction.upgradeCost!;
+        actions.push({key:'R',label:texts.interactR.upgrade,cost,affordable:this.workshop.optionalPurchaseCoins>=cost});
+      }
+      this.turretPanels[i].showFacing(turret.position,playerPosition,1.1,0.85,actions);
     });
     this.workshop.placedCleanupButtons.forEach((button,i)=>{
       const selected=canPurchase && interaction.e==='cleanup' &&

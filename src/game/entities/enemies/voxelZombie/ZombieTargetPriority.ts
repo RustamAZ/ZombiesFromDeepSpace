@@ -1,32 +1,48 @@
 import type { EnemyTarget } from '../Enemy';
+import { Vector3 } from '@babylonjs/core';
 import { targetingConfig as cfg } from './targetingConfig';
+export interface RoomTurret { target:EnemyTarget; readonly armed:boolean; position:Vector3 }
 export interface TargetContext {
-  roomId:string|undefined;player:EnemyTarget;playerAvailable:boolean;playerDistance:number;
-  turrets:readonly {target:EnemyTarget;armed:boolean;distance:number}[];
+  roomId:string|undefined; player:EnemyTarget; position:Vector3; turrets:readonly RoomTurret[];
+  canReach(point:Vector3):boolean|undefined;
 }
 export class ZombieTargetPriority {
   private roomId?:string;
   private intent:'player'|'turrets'|'core'='core';
   private current?:EnemyTarget;
   private blocked?:EnemyTarget;
-  constructor(private readonly core:EnemyTarget) {}
-  get target():EnemyTarget { return this.blocked?.isAlive?this.blocked:this.current?.isAlive?this.current:this.core; }
+  constructor(private readonly core:EnemyTarget) { this.current=core; }
+  resolve(distanceSquared:number):EnemyTarget {
+    if(this.blocked && (!this.blocked.isAlive || distanceSquared>cfg.blockedReleaseRange**2))this.blocked=undefined;
+    return this.blocked ?? (this.current?.isAlive ? this.current : this.core);
+  }
   blockedBy(player:EnemyTarget):void { if(player.isAlive)this.blocked=player; }
   update(context:TargetContext):void {
-    if(this.blocked && (!this.blocked.isAlive || context.playerDistance>cfg.blockedReleaseRange))this.blocked=undefined;
-    const turrets=context.turrets.filter(t=>t.target.isAlive);
-    if(context.roomId!==undefined && this.roomId!==context.roomId) {
+    if(context.roomId===undefined)return;
+    const turrets=context.turrets;
+    if(this.roomId!==context.roomId) {
       this.roomId=context.roomId;
-      const weights=turrets.some(t=>t.armed)?cfg.armed:turrets.length?cfg.empty:cfg.none;
+      const weights=turrets.some(t=>t.target.isAlive && t.armed)?cfg.armed:
+        turrets.some(t=>t.target.isAlive)?cfg.empty:cfg.none;
       const roll=Math.random();
-      this.intent=roll<weights.player?(context.playerAvailable?'player':'core'):roll<weights.player+weights.turret?'turrets':'core';
+      this.intent=roll<weights.player?'player':roll<weights.player+weights.turret?'turrets':'core';
       this.current=undefined;
     }
-    if(this.intent==='turrets') {
-      if(!this.current?.isAlive || !turrets.some(t=>t.target===this.current)) {
-        this.current=[...turrets].sort((a,b)=>Number(b.armed)-Number(a.armed)||a.distance-b.distance)[0]?.target;
-        if(!this.current){this.intent='core';this.current=this.core;}
-      }
-    } else this.current=this.intent==='player'&&context.player.isAlive?context.player:this.core;
+    if(this.intent==='core' || this.current?.isAlive)return;
+    if(this.intent==='player') {
+      if(context.player.isAlive && context.canReach(context.player.feet))this.current=context.player;
+      return;
+    }
+    let best:RoomTurret|undefined, bestDistance=Infinity, pending=false;
+    for(const turret of turrets) {
+      if(!turret.target.isAlive || (best?.armed && !turret.armed))continue;
+      const distance=Vector3.DistanceSquared(context.position,turret.position);
+      if(best && turret.armed===best.armed && distance>=bestDistance)continue;
+      const reachable=context.canReach(turret.position);
+      if(reachable===undefined)pending=true;
+      if(reachable){best=turret;bestDistance=distance;}
+    }
+    if(best)this.current=best.target;
+    else if(!pending)this.intent='core';
   }
 }

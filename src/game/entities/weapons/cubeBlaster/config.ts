@@ -1,20 +1,15 @@
 import { defaultWeaponConfig, type WeaponConfig } from '../config';
+import { CubeProjectile } from '../../projectiles/cubeProjectile/CubeProjectile';
+import { cubeProjectileConfig } from '../../projectiles/cubeProjectile/config';
+import type { ProjectileFactory } from '../../projectiles/Projectile';
 
 export interface CubeBlasterConfig extends WeaponConfig {
-  readonly speedUnitsPerSecond: number;
-  readonly range: number;
-  readonly cubeSize: number;
-  readonly impactRadius: number;
-  readonly penetration: number;
+  readonly createProjectile: ProjectileFactory;
 }
 
 export const cubeBlasterConfig: CubeBlasterConfig = {
   ...defaultWeaponConfig,
-  damage: 12,
+  damage: cubeProjectileConfig.damage,
   shotIntervalSeconds: 0.35,
-  speedUnitsPerSecond: 14,
-  range: 40,
-  cubeSize: 0.14,
-  impactRadius: 0.8,
-  penetration: 2
+  createProjectile: (direction,source) => new CubeProjectile(direction,source)
 };

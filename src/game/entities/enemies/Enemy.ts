@@ -1,11 +1,12 @@
 import type { AbstractMesh, Vector3 } from '@babylonjs/core';
 import type { VoxelMaterialType } from '../voxel/VoxelImpact';
+import type { NavigationFrameStats } from '../../navigation/NavigationFrameStats';
 
 export type EnemyState = 'idle'|'chase'|'investigate'|'windup'|'recovery'|'dead';
 export interface EnemyConfig {
   material: VoxelMaterialType; maxHealth: number; damage: number;
   patrolRadius: number; patrolSpeed: number; chaseSpeed: number;
-  personalSpaceRadius: number;
+  personalSpaceRadius: number; wallBreakReach:number;
   patrolDesiredDistanceRatio: number; patrolDistanceWeight: number;
   patrolOpenSpaceWeight: number; patrolForwardWeight: number;
   patrolRandomWeight: number; patrolClearanceRadius: number;
@@ -24,8 +25,9 @@ export abstract class Enemy {
   abstract readonly config: EnemyConfig;
   abstract get state(): EnemyState;
   abstract get deathComplete(): boolean;
+  abstract get position(): Readonly<Vector3>;
   abstract get aimPoint(): Vector3;
   abstract ownsMesh(mesh: AbstractMesh): boolean;
   abstract get debug(): { position:Vector3; route:readonly Vector3[]; lastSeen?:Vector3; strikePoint?:Vector3 };
-  abstract update(dt: number, target: EnemyTarget): void;
+  abstract update(dt: number, target: EnemyTarget, stats?:NavigationFrameStats, animate?:boolean): void;
 }

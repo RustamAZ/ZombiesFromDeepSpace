@@ -10,6 +10,7 @@ export function addStaticBlocker(scene:Scene,root:TransformNode,name:string,
   mesh.isVisible=false;
   mesh.isPickable=false;
   mesh.checkCollisions=false;
+  mesh.metadata={placementBlocker:true};
   mesh.computeWorldMatrix(true);
   return new PhysicsAggregate(mesh,PhysicsShapeType.BOX,{mass:0,friction:0.7,restitution:0},scene);
 }

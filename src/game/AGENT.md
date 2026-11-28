@@ -33,18 +33,24 @@ entities/weapons/
 ## Defense Run
 
 - Construction uses `CarrySlot` (one generic carried item), `BuildCatalog` (type-to-price/factory), and `PlacementGrid` (stable room/cell IDs). No purchase/carry/placement logic belongs in CubeTurret. Workshop composes the catalog with concrete factories. BuildingView is only the temporary shop/held-item/preview presentation.
-- A carried construction kit disables firing without replacing the equipped weapon. E buys/picks up; Q installs with a fresh placement check and consumes the kit only after a successful placement. Buying uses RunProfile coins and the existing wave purchase restriction; installation remains possible during a wave.
+- A carried construction kit disables firing without replacing the equipped weapon. E buys/picks up; Q installs after a fresh footprint and sight check; R puts it down for later pickup. The shop sells only one outstanding kit and only if a room has a free cell. Buying uses RunProfile coins and the wave purchase restriction; installation remains possible during a wave.
 - ZombieTargetPriority chooses an intention once on actual room entry, not in corridors or every frame. Armed turret weights: player 30%, turrets 40%, core 30%; empty turrets: 45/10/45; no turrets: 50/0/50. Available targets require a strict non-breaching route. Door breaches recalculate paths, not intention. Player body-block is the only interrupt; projectile damage slows/knocks back but does not change target.
-- Construction slots remain occupied after turret destruction for rebuilding. Dynamic turrets must be registered with combat targets and UI together. UI arrays grow when the turret registry grows.
+- Construction slots count toward the four-turret room cap, including starter and destroyed turrets. Dynamic turrets must be registered with combat targets and UI together. UI arrays grow when the turret registry grows.
 
 - `Workshop` owns the current level only: rooms, doors, enemies, turrets, core and navigation. It must not own permanent player data.
 - `PlayerProfile` owns gold, experience and future persistent resources. Access external persistence only through `ProfileRepository`; a future Yandex adapter must implement that interface rather than leak SDK calls into game objects.
 - `EnemyWaveController` owns wave phases and live/queued counts. It spawns enemies through a callback and learns about a death by observing the enemy state; it does not decide enemy behavior.
 - `Turret` is an abstract contract with declarations only. A concrete turret owns combat state; its `Visual` owns meshes and exposes its muzzle transform. Range means target-acquisition range, distinct from projectile flight range.
+- Concrete turret level configs own upgrade costs, fire rates, visual sizing and projectile factories. Workshop gates paid upgrades through RunProfile during preparation. Upgrade the existing turret and keep its health, ammo, slot and level on rebuild.
+- `Projectile` declares the flight data and impact hook. `ProjectileSystem` sweeps the flight to the first collision. Explosions damage each live zombie in radius once (including the direct target), without cover rays. Chip at most one nearby shell voxel per victim as cosmetic debris; do not run structural fracture or create a rigid body for that chip. Doors retain material-based destruction; blast fragments do not deal secondary damage.
 - A door visual must never be the only source of truth. Its interaction state controls the matching physical colliders and navigation cells. A changed door or destroyed voxel must increment navigation revision so a pursuing enemy replans from its current position.
 - UI under `src/game/ui` only renders state and forwards commands. It must not mutate health, gold, ammo, wave state or door state directly.
 
 ## Levels and training
+
+- Levels two and three keep the stress HUD. Level three uses level two's wave quota per spawn room, rotating spawns across three lanes while sharing one per-frame spawn and navigation budget. Tunnel pairs are ordered outer room to inner room; the inner room's vacuum covers the corridor.
+- `maxPathBuildsPerFrame` budgets both movement plans and target reachability on one FIFO. A pending check is not an unreachable target: keep the current target and retry before rolling room intent. See `OPTIMIZATIONS.md` for historical measurements.
+- Possible follow-up (not implemented): build one reverse direction field per actual target ID, not per enemy or per intention. Share directions from each cell; prefer any walkable route before a breach. Keep crowd avoidance and door attack positions local. Start with the stationary core and invalidate its field when traversability changes; profile before extending to individual turrets or the moving player.
 
 - `levels/LevelRegistry` maps stable level IDs to immutable definitions. Layout, turret placements and waves live in each level's `config.ts`; do not hardcode tutorial geometry in Workshop.
 - `LevelSession` owns one FirstPersonGame lifetime. SceneController owns the persistent profile and disposes the old session before restarting or changing levels. RunProfile is new for each session.
